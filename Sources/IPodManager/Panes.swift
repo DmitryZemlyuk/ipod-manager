@@ -126,6 +126,7 @@ struct IPodPane: View {
     @Binding var selection: Set<String>
     let search: String
     let onShowInfo: (Set<String>) -> Void
+    let onAutoTag: (Set<String>) -> Void
     @State private var sortOrder = [KeyPathComparator(\IPodRow.artist)]
     @State private var dropTargeted = false
 
@@ -254,6 +255,8 @@ struct IPodPane: View {
         .contextMenu(forSelectionType: String.self) { ids in
             Button(L("ctx.info")) { onShowInfo(ids) }
                 .disabled(ids.isEmpty)
+            Button(L("ctx.autotag")) { onAutoTag(ids) }
+                .disabled(model.trackIDs(for: ids).isEmpty)
             Divider()
             Button(L("ctx.delete")) { model.markDeleted(ids) }
                 .disabled(ids.isEmpty)

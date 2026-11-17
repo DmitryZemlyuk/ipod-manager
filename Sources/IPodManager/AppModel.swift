@@ -289,6 +289,17 @@ final class AppModel: ObservableObject {
         refreshOnIPodFlags()
     }
 
+    /// Different edits for different tracks in one go (one UI refresh).
+    func applyEdits(_ map: [UInt32: TrackEdit]) {
+        guard !map.isEmpty else { return }
+        var edits = pendingEdits
+        for (id, e) in map where !e.isEmpty {
+            edits[id] = (edits[id] ?? TrackEdit()).merged(with: e)
+        }
+        pendingEdits = edits
+        refreshOnIPodFlags()
+    }
+
     func applySoundCheck(_ values: [UInt32: UInt32]) {
         var edits = pendingEdits
         for (id, v) in values {

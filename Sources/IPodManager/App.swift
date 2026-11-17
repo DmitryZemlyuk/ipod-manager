@@ -6,6 +6,11 @@ struct IPodManagerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
+    init() {
+        // Freeze the language the app started with before Settings can change it.
+        _ = AppLanguage.atLaunch
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -26,6 +31,11 @@ struct IPodManagerApp: App {
                     .keyboardShortcut("e", modifiers: [.command])
                     .disabled(model.device == nil)
             }
+        }
+
+        Settings {
+            SettingsView()
+                .environmentObject(model)
         }
     }
 }

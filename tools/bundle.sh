@@ -20,6 +20,13 @@ for lang in en ru uk; do
   cp -R "Resources/$lang.lproj" "$APP/Contents/Resources/"
 done
 iconutil -c icns Resources/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
+if [ -x vendor/fpcalc ]; then
+  cp vendor/fpcalc "$APP/Contents/MacOS/fpcalc"
+  codesign --force --sign - "$APP/Contents/MacOS/fpcalc"
+  echo "Bundled fpcalc"
+else
+  echo "warning: fpcalc not bundled – recognition by sound will be unavailable"
+fi
 codesign --force --deep --sign - "$APP"
 codesign --verify --verbose "$APP"
 

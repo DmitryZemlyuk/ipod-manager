@@ -22,6 +22,27 @@ jobs:
           swift --version
       - name: Unit tests
         run: swift test
+      - name: Fetch fpcalc (Chromaprint, for AcoustID)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p vendor/dl
+          for tag in $(gh release list -R acoustid/chromaprint --limit 10 --json tagName -q '.[].tagName'); do
+            if gh release download "$tag" -R acoustid/chromaprint --pattern '*fpcalc*macos*' -D vendor/dl 2>/dev/null; then
+              echo "Using Chromaprint $tag"; break
+            fi
+          done
+          ls -l vendor/dl
+          for f in vendor/dl/*.tar.gz; do tar -xzf "$f" -C vendor/dl; done
+          best=""
+          for f in $(find vendor/dl -type f -name fpcalc); do
+            archs=$(lipo -archs "$f")
+            echo "$f: $archs"
+            if [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]; then best="$f"; break; fi
+            [ -z "$best" ] && best="$f"
+          done
+          if [ -n "$best" ]; then cp "$best" vendor/fpcalc; chmod +x vendor/fpcalc; vendor/fpcalc -version || true; fi
       - name: Build universal app
         run: tools/bundle.sh
       - uses: actions/upload-artifact@v6

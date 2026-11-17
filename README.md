@@ -2,13 +2,15 @@
 
 A native macOS app for managing music on an iPod Classic 5th generation (iPod Video) without iTunes or Finder sync.
 
-## Features (v0.1)
+## Features
 
 - **Two panes:** a music folder on your Mac on the left and the iPod on the right. Drag songs, albums or whole folders from the left pane or from Finder onto the iPod.
 - **Write queue:** additions, deletions and tag edits are collected first, then written in one go with **Write to iPod**. The previous database is kept as `iTunesDB.bak`.
 - **Batch tag editing** for songs already on the iPod (shared fields across a multi-selection).
 - **Batch volume leveling** with Sound Check: loudness is measured per EBU R128 straight from the files on the iPod, with track or album mode, target level and clipping protection. Files are not modified.
 - **Export** from the iPod back to the Mac with real file names and an Artist / Album folder structure.
+- **Tags from the internet** in batches: songs are matched album by album against MusicBrainz (few requests, consistent album tags), the rest one by one; untagged files can be recognized by sound via AcoustID (bundled Chromaprint `fpcalc`, needs a free AcoustID API key in Settings). When an album has several editions you pick one; nothing is written until you apply and write to the iPod.
+- Settings (⌘,): interface language, default volume leveling options, AcoustID key.
 - Cover thumbnails in both lists, read from the files' tags.
 - Supported formats: MP3, AAC, Apple Lossless, WAV, AIFF. FLAC and other formats the iPod can't play are skipped.
 - Localized in English, Ukrainian and Russian.
@@ -17,7 +19,7 @@ A native macOS app for managing music on an iPod Classic 5th generation (iPod Vi
 
 - Cover art on the iPod itself (ArtworkDB).
 - MP3Gain-style lossless volume change in the files.
-- Tags and covers from MusicBrainz / AcoustID / Cover Art Archive.
+- Writing found covers (Cover Art Archive) to the iPod together with ArtworkDB support.
 
 ## Install
 

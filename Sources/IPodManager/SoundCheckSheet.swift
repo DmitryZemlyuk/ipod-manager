@@ -114,9 +114,9 @@ struct SoundCheckSheet: View {
 
     @StateObject private var job = GainJob()
     @State private var scope: Scope = .all
-    @State private var target: Double = 89
-    @State private var albumMode = true
-    @State private var preventClipping = true
+    @AppStorage(Prefs.scTarget) private var target = 89.0
+    @AppStorage(Prefs.scAlbumMode) private var albumMode = true
+    @AppStorage(Prefs.scPreventClipping) private var preventClipping = true
 
     private var liveTracks: [Track] {
         model.tracks.filter { !model.pendingDeletes.contains($0.uniqueID) }.map { model.effective($0) }

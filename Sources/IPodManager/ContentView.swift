@@ -4,7 +4,7 @@ import ImageIO
 import IPodKit
 
 enum SheetKind: String, Identifiable {
-    case tags, soundCheck, export
+    case tags, soundCheck, export, autoTag
     var id: String { rawValue }
 }
 
@@ -25,6 +25,9 @@ struct ContentView: View {
                 IPodPane(selection: $ipodSelection, search: search, onShowInfo: { ids in
                     tagTargets = ids
                     sheet = .tags
+                }, onAutoTag: { ids in
+                    ipodSelection = ids
+                    sheet = .autoTag
                 })
                 .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.leading, 5)
@@ -45,6 +48,8 @@ struct ContentView: View {
                 SoundCheckSheet(selectedRowIDs: ipodSelection)
             case .export:
                 ExportSheet(selectedRowIDs: ipodSelection)
+            case .autoTag:
+                AutoTagSheet(selectedRowIDs: ipodSelection)
             }
         }
         .sheet(isPresented: $model.showCommitSheet) {
@@ -74,6 +79,14 @@ struct ContentView: View {
             }
             .help(L("tool.soundcheck"))
             .disabled(model.session == nil)
+
+            Button {
+                sheet = .autoTag
+            } label: {
+                Label(L("tool.autotag"), systemImage: "globe")
+            }
+            .help(L("tool.autotag"))
+            .disabled(model.session == nil || model.tracks.isEmpty)
 
             Button {
                 tagTargets = ipodSelection

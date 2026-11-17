@@ -1,0 +1,490 @@
+import SwiftUI
+import IPodKit
+
+@MainActor
+final class AutoTagJob: ObservableObject {
+    @Published var groups: [TagGroup] = []
+    @Published var done = 0
+    @Published var total = 0
+    @Published var running = false
+    @Published var finished = false
+    @Published var checked = Set<String>()
+    @Published var choice: [String: String] = [:]   // group id → release id
+    private var task: Task<Void, Never>?
+    private var generation = 0
+
+    func start(_ items: [TagItem], acoustIDKey: String, fpcalc: URL?) {
+        cancel()
+        groups = []
+        checked = []
+        choice = [:]
+        done = 0
+        total = 0
+        running = true
+        finished = false
+        generation += 1
+        let gen = generation
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let tagger = AutoTagger(client: MusicBrainzClient(appVersion: version), acoustIDKey: acoustIDKey, fpcalc: fpcalc)
+        task = Task {
+            let result = await tagger.run(items: items, progress: { d, t in
+                Task { @MainActor in
+                    guard self.generation == gen else { return }
+                    self.done = d
+                    self.total = t
+                }
+            }, onGroup: { g in
+                Task { @MainActor in self.add(g, gen) }
+            })
+            guard self.generation == gen else { return }
+            for g in result { self.add(g, gen) }
+            self.running = false
+            self.finished = !Task.isCancelled
+        }
+    }
+
+    private func add(_ g: TagGroup, _ gen: Int) {
+        guard gen == generation, !groups.contains(where: { $0.id == g.id }) else { return }
+        groups.append(g)
+        if let first = g.options.first {
+            choice[g.id] = first.id
+            if g.status == .found { checked.insert(g.id) }
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+        generation += 1
+        running = false
+    }
+
+    func option(for g: TagGroup) -> ReleaseOption? {
+        let id = choice[g.id]
+        return g.options.first { $0.id == id } ?? g.options.first
+    }
+}
+
+struct AutoTagSheet: View {
+    enum Scope: Hashable { case all, selected, incomplete }
+    enum Filter: Hashable { case all, found, choose, notFound }
+
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let selectedRowIDs: Set<String>
+
+    @StateObject private var job = AutoTagJob()
+    @AppStorage(Prefs.acoustIDKey) private var acoustIDKey = ""
+    @AppStorage("autoTagKeepFilled") private var keepFilled = true
+    @AppStorage("autoTagReplaceGenre") private var replaceGenre = false
+    @State private var scope: Scope = .all
+    @State private var filter: Filter = .all
+
+    private var fpcalc: URL? { Bundle.main.url(forAuxiliaryExecutable: "fpcalc") }
+
+    private var tracksByID: [UInt32: Track] {
+        var d: [UInt32: Track] = [:]
+        for t in model.tracks where !model.pendingDeletes.contains(t.uniqueID) { d[t.uniqueID] = model.effective(t) }
+        return d
+    }
+
+    private func items(_ scope: Scope) -> [TagItem] {
+        guard let device = model.device else { return [] }
+        let selected = Set(model.trackIDs(for: selectedRowIDs))
+        return model.tracks.compactMap { raw -> TagItem? in
+            guard !model.pendingDeletes.contains(raw.uniqueID) else { return nil }
+            let t = model.effective(raw)
+            switch scope {
+            case .all: break
+            case .selected: if !selected.contains(t.uniqueID) { return nil }
+            case .incomplete:
+                let complete = !t.album.isEmpty && !AutoTagger.isPlaceholderArtist(t.artist)
+                    && !AutoTagger.isJunkTitle(t.title) && t.year > 0 && !t.genre.isEmpty && t.trackNumber > 0
+                if complete { return nil }
+            }
+            return TagItem(id: t.uniqueID, title: t.title, artist: t.artist, album: t.album,
+                           albumArtist: t.albumArtist, genre: t.genre, trackNumber: Int(t.trackNumber),
+                           discNumber: Int(t.discNumber), durationMs: Int(t.durationMs),
+                           fileURL: device.fileURL(for: t))
+        }
+    }
+
+    private var visibleGroups: [TagGroup] {
+        job.groups.filter { g in
+            switch filter {
+            case .all: return true
+            case .found: return g.status == .found
+            case .choose: return g.status == .choose
+            case .notFound: return g.status == .notFound
+            }
+        }
+    }
+
+    private func count(_ s: TagGroup.Status) -> Int {
+        job.groups.filter { $0.status == s }.reduce(0) { $0 + $1.itemIDs.count }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            if job.running || !job.groups.isEmpty { filterChips }
+            results
+            progress
+            optionsRow
+            footer
+        }
+        .padding(22)
+        .frame(width: 900, height: 700)
+        .onAppear {
+            if !items(.selected).isEmpty { scope = .selected }
+        }
+        .onDisappear { job.cancel() }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("at.title")).font(.title3.weight(.semibold))
+                Text(L("at.subtitle")).font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Picker("", selection: $scope) {
+                Text(LF("sc.scope.all", items(.all).count)).tag(Scope.all)
+                Text(LF("sc.scope.selected", items(.selected).count)).tag(Scope.selected)
+                Text(LF("at.scope.incomplete", items(.incomplete).count)).tag(Scope.incomplete)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(job.running)
+        }
+    }
+
+    private var filterChips: some View {
+        HStack(spacing: 8) {
+            chip(.all, LF("at.filter.all", job.groups.reduce(0) { $0 + $1.itemIDs.count }), nil)
+            chip(.found, LF("at.filter.found", count(.found)), .green)
+            chip(.choose, LF("at.filter.choose", count(.choose)), .orange)
+            chip(.notFound, LF("at.filter.notfound", count(.notFound)), .gray)
+            Spacer()
+        }
+    }
+
+    private func chip(_ f: Filter, _ text: String, _ dot: Color?) -> some View {
+        Button {
+            filter = f
+        } label: {
+            HStack(spacing: 6) {
+                if let dot { Circle().fill(dot).frame(width: 8, height: 8) }
+                Text(text)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(filter == f ? Color.primary.opacity(0.85) : Color.primary.opacity(0.06), in: Capsule())
+            .foregroundStyle(filter == f ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var results: some View {
+        if job.groups.isEmpty {
+            VStack(spacing: 10) {
+                Image(systemName: "globe")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.tertiary)
+                Text(job.running ? L("at.searching") : L("at.empty"))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                if !job.running && (acoustIDKey.isEmpty || fpcalc == nil) {
+                    Text(L("at.nofingerprint"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(visibleGroups) { g in
+                        GroupCard(group: g, job: job, tracks: tracksByID, keepFilled: keepFilled, replaceGenre: replaceGenre)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var progress: some View {
+        if job.running {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(LF("at.progress", job.done, max(job.total, job.done)))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ProgressView(value: Double(job.done), total: Double(max(job.total, 1)))
+            }
+        }
+    }
+
+    private var optionsRow: some View {
+        HStack(spacing: 22) {
+            Toggle(L("at.keepfilled"), isOn: $keepFilled)
+            Toggle(L("at.replacegenre"), isOn: $replaceGenre)
+                .disabled(!keepFilled)
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            if job.running {
+                Button(L("sc.stop")) { job.cancel() }
+            } else {
+                Button(job.groups.isEmpty ? L("at.start") : L("at.restart")) {
+                    job.start(items(scope), acoustIDKey: acoustIDKey, fpcalc: fpcalc)
+                }
+                .disabled(items(scope).isEmpty)
+            }
+            Spacer()
+            Text(L("at.nowrite"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(L("cancel"), role: .cancel) {
+                job.cancel()
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+            let edits = computeEdits()
+            Button(edits.isEmpty ? L("sc.apply") : LF("sc.apply.count", edits.count)) {
+                model.applyEdits(edits)
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(edits.isEmpty)
+        }
+    }
+
+    private func computeEdits() -> [UInt32: TrackEdit] {
+        var out: [UInt32: TrackEdit] = [:]
+        let tracks = tracksByID
+        for g in job.groups where job.checked.contains(g.id) {
+            guard let opt = job.option(for: g) else { continue }
+            for (id, p) in opt.proposals {
+                guard let t = tracks[id] else { continue }
+                let e = AutoTagSheet.edit(for: t, proposal: p, keepFilled: keepFilled, replaceGenre: replaceGenre)
+                if !e.isEmpty { out[id] = e }
+            }
+        }
+        return out
+    }
+
+    static func edit(for t: Track, proposal p: TagProposal, keepFilled: Bool, replaceGenre: Bool) -> TrackEdit {
+        var e = TrackEdit()
+        func str(_ cur: String, _ new: String, placeholder: Bool = false, force: Bool = false) -> String? {
+            guard !new.isEmpty, new != cur else { return nil }
+            if keepFilled && !force && !cur.isEmpty && !placeholder { return nil }
+            return new
+        }
+        func num(_ cur: UInt32, _ new: Int) -> Int? {
+            guard new > 0, Int(cur) != new else { return nil }
+            if keepFilled && cur > 0 { return nil }
+            return new
+        }
+        e.title = str(t.title, p.title, placeholder: AutoTagger.isJunkTitle(t.title))
+        e.artist = str(t.artist, p.artist, placeholder: AutoTagger.isPlaceholderArtist(t.artist))
+        e.album = str(t.album, p.album)
+        e.albumArtist = str(t.albumArtist, p.albumArtist)
+        e.genre = str(t.genre, p.genre, force: replaceGenre)
+        e.year = num(t.year, p.year)
+        e.trackNumber = num(t.trackNumber, p.trackNumber)
+        e.trackCount = num(t.trackCount, p.trackCount)
+        e.discNumber = num(t.discNumber, p.discNumber)
+        e.discCount = num(t.discCount, p.discCount)
+        if p.compilation && !t.compilation { e.compilation = true }
+        return e
+    }
+}
+
+private struct GroupCard: View {
+    let group: TagGroup
+    @ObservedObject var job: AutoTagJob
+    let tracks: [UInt32: Track]
+    let keepFilled: Bool
+    let replaceGenre: Bool
+
+    private var option: ReleaseOption? { job.option(for: group) }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Toggle("", isOn: Binding(
+                get: { job.checked.contains(group.id) },
+                set: { if $0 { job.checked.insert(group.id) } else { job.checked.remove(group.id) } }
+            ))
+            .labelsHidden()
+            .disabled(group.options.isEmpty)
+            .padding(.top, 2)
+
+            cover
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(group.title).font(.headline).lineLimit(1)
+                    Text(group.artist.isEmpty ? LF("at.songs", group.itemIDs.count)
+                         : group.artist + " · " + LF("at.songs", group.itemIDs.count))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    badge
+                }
+                if let option {
+                    changes(option)
+                }
+                if group.options.count > 1 {
+                    editions
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(group.status == .choose ? Color.orange.opacity(0.07) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(group.status == .choose ? Color.orange.opacity(0.6) : Color.primary.opacity(0.1),
+                              lineWidth: group.status == .choose ? 1.5 : 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private var cover: some View {
+        if let option {
+            AsyncImage(url: URL(string: "https://coverartarchive.org/release/\(option.id)/front-250")) { phase in
+                if let img = phase.image {
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    placeholder
+                }
+            }
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            placeholder
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            Color.secondary.opacity(0.15)
+            Image(systemName: "music.note").foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private var badge: some View {
+        switch group.status {
+        case .found:
+            Badge(text: group.source == .fingerprint
+                  ? LF("at.badge.sound", Int(group.confidence * 100))
+                  : LF("at.badge.tags", Int(group.confidence * 100)),
+                  color: .green)
+        case .choose:
+            Badge(text: L("at.badge.choose"), color: .orange)
+        case .notFound:
+            Badge(text: L("at.badge.notfound"), color: .gray)
+        }
+    }
+
+    private func changes(_ option: ReleaseOption) -> some View {
+        let lines = summary(option)
+        return VStack(alignment: .leading, spacing: 3) {
+            if lines.isEmpty {
+                Text(L("at.nochanges")).font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                HStack(spacing: 4) {
+                    Text(line.label + ":").foregroundStyle(.secondary)
+                    if !line.old.isEmpty {
+                        Text(line.old).strikethrough().foregroundStyle(.tertiary)
+                        Text("→").foregroundStyle(.secondary)
+                    }
+                    Text(line.new).fontWeight(.semibold).foregroundStyle(.green)
+                }
+                .font(.caption)
+                .lineLimit(1)
+            }
+        }
+    }
+
+    private struct Line { let label: String; let old: String; let new: String }
+
+    /// Album-level changes from the first song, plus a count of per-song changes.
+    private func summary(_ option: ReleaseOption) -> [Line] {
+        var lines: [Line] = []
+        var titleChanges = 0
+        var numberChanges = 0
+        var first: (Track, TrackEdit)?
+        for id in group.itemIDs {
+            guard let t = tracks[id], let p = option.proposals[id] else { continue }
+            let e = AutoTagSheet.edit(for: t, proposal: p, keepFilled: keepFilled, replaceGenre: replaceGenre)
+            if e.title != nil { titleChanges += 1 }
+            if e.trackNumber != nil || e.trackCount != nil { numberChanges += 1 }
+            if first == nil { first = (t, e) }
+        }
+        guard let f = first else { return [] }
+        let (t, e) = f
+        let single = group.itemIDs.count == 1
+        if single, let v = e.title { lines.append(Line(label: L("tag.title"), old: t.title, new: v)) }
+        if let v = e.artist { lines.append(Line(label: L("tag.artist"), old: t.artist, new: v)) }
+        if let v = e.album { lines.append(Line(label: L("tag.album"), old: t.album, new: v)) }
+        if let v = e.albumArtist, v != e.artist ?? t.artist { lines.append(Line(label: L("tag.albumArtist"), old: t.albumArtist, new: v)) }
+        if let v = e.year { lines.append(Line(label: L("tag.year"), old: t.year > 0 ? String(t.year) : "", new: String(v))) }
+        if let v = e.genre { lines.append(Line(label: L("tag.genre"), old: t.genre, new: v)) }
+        if !single, titleChanges > 0 { lines.append(Line(label: L("at.titles"), old: "", new: LF("at.count", titleChanges))) }
+        if numberChanges > 0 {
+            if single {
+                let n = e.trackNumber ?? Int(t.trackNumber)
+                let total = e.trackCount ?? Int(t.trackCount)
+                lines.append(Line(label: L("tag.track"), old: "", new: total > 0 ? "\(n) / \(total)" : "\(n)"))
+            } else {
+                lines.append(Line(label: L("at.numbers"), old: "", new: LF("at.count", numberChanges)))
+            }
+        }
+        return lines
+    }
+
+    private var editions: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(group.options) { o in
+                Button {
+                    job.choice[group.id] = o.id
+                    job.checked.insert(group.id)
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: job.option(for: group)?.id == o.id ? "largecircle.fill.circle" : "circle")
+                            .foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text([o.year.map(String.init), o.format.isEmpty ? nil : o.format, o.country.isEmpty ? nil : o.country]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .fontWeight(.semibold)
+                            Text(LF("at.tracks", o.trackCount)).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption)
+                    .padding(8)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(job.option(for: group)?.id == o.id ? Color.accentColor : Color.primary.opacity(0.12),
+                                          lineWidth: job.option(for: group)?.id == o.id ? 1.5 : 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
