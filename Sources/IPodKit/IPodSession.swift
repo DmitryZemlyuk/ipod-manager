@@ -140,10 +140,10 @@ public final class IPodSession: @unchecked Sendable {
         }
 
         // 6. Cleanup after a successful write.
-        if mergedPlayCounts {
-            try? fm.removeItem(at: device.playCountsURL)
-            mergedPlayCounts = false
-        }
+        // Play Counts entries are indexed by track position, so they are stale after any write.
+        // They were merged above when they matched the old database.
+        try? fm.removeItem(at: device.playCountsURL)
+        mergedPlayCounts = false
         if let items = try? fm.contentsOfDirectory(atPath: device.iTunesURL.path) {
             for name in items where name.hasPrefix("OTGPlaylistInfo") {
                 try? fm.removeItem(at: device.iTunesURL.appendingPathComponent(name))

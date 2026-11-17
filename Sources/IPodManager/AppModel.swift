@@ -120,6 +120,7 @@ final class AppModel: ObservableObject {
     }
 
     func select(_ d: IPodDevice) {
+        if d == device, session != nil || loading { return }
         device = d
         session = nil
         loadError = nil
