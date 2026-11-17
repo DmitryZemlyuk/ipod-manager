@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Source of truth for UI strings. Generates Resources/<lang>.lproj/Localizable.strings."""
+import os
+
+S = {
+"app.title": ("iPod Manager", "iPod Manager", "iPod Manager"),
+"menu.ipod": ("iPod", "iPod", "iPod"),
+"ok": ("OK", "OK", "OK"),
+"cancel": ("Cancel", "Отмена", "Скасувати"),
+"save": ("Save", "Сохранить", "Зберегти"),
+"done": ("Done", "Готово", "Готово"),
+"yes": ("Yes", "Да", "Так"),
+"db": ("dB", "дБ", "дБ"),
+"gain.db": ("%@ dB", "%@ дБ", "%@ дБ"),
+"notice.title": ("iPod Manager", "iPod Manager", "iPod Manager"),
+"search.prompt": ("Search", "Поиск", "Пошук"),
+
+"write.button": ("Write to iPod", "Записать на iPod", "Записати на iPod"),
+"write.help": ("Copy new songs and save all changes to the iPod", "Скопировать новые песни и сохранить все изменения на iPod", "Скопіювати нові пісні та зберегти всі зміни на iPod"),
+"tool.soundcheck": ("Volume leveling", "Выравнивание громкости", "Вирівнювання гучності"),
+"tool.info": ("Info and tags", "Сведения и теги", "Відомості та теги"),
+"tool.export": ("Export to Mac", "Экспорт на Mac", "Експорт на Mac"),
+"tool.eject": ("Eject", "Извлечь", "Вилучити"),
+"eject.pending": ("There are changes that haven't been written to the iPod yet. Write or discard them before ejecting.", "Есть изменения, которые ещё не записаны на iPod. Запишите или отмените их перед извлечением.", "Є зміни, які ще не записані на iPod. Запишіть або скасуйте їх перед вилученням."),
+
+"ipod.choose": ("Choose iPod", "Выбрать iPod", "Вибрати iPod"),
+"ipod.refresh": ("Look for iPods again", "Искать iPod снова", "Шукати iPod знову"),
+"ipod.none.short": ("No iPod", "Нет iPod", "Немає iPod"),
+"ipod.none.title": ("Connect your iPod", "Подключите iPod", "Підключіть iPod"),
+"ipod.none.text": ("Connect the iPod with a cable. If it doesn't appear, turn on \"Enable disk use\" for it in Finder.", "Подключите iPod кабелем. Если он не появился, включите для него «Использовать как диск» в Finder.", "Підключіть iPod кабелем. Якщо він не з'явився, увімкніть для нього «Використовувати як диск» у Finder."),
+"ipod.error.title": ("Couldn't read the iPod", "Не удалось прочитать iPod", "Не вдалося прочитати iPod"),
+"ipod.loading": ("Reading the iPod…", "Читаю iPod…", "Читаю iPod…"),
+"ipod.songs": ("%ld songs", "Песен: %ld", "Пісень: %ld"),
+
+"mac.change": ("Change folder", "Сменить папку", "Змінити теку"),
+"mac.choose": ("Choose", "Выбрать", "Вибрати"),
+"mac.scanning": ("Scanning… %ld", "Сканирую… %ld", "Сканую… %ld"),
+"mac.empty.title": ("No music in this folder", "В этой папке нет музыки", "У цій теці немає музики"),
+"mac.empty.text": ("Choose a folder with music, or drag files from Finder straight onto the iPod list.", "Выберите папку с музыкой или перетащите файлы из Finder прямо в список iPod.", "Виберіть теку з музикою або перетягніть файли з Finder просто в список iPod."),
+"mac.add": ("Add to iPod", "Добавить на iPod", "Додати на iPod"),
+"mac.reveal": ("Show in Finder", "Показать в Finder", "Показати у Finder"),
+"mac.onipod": ("Already on the iPod", "Уже на iPod", "Вже на iPod"),
+
+"col.title": ("Title", "Название", "Назва"),
+"col.artist": ("Artist", "Исполнитель", "Виконавець"),
+"col.album": ("Album", "Альбом", "Альбом"),
+"col.time": ("Time", "Время", "Час"),
+"col.format": ("Format", "Формат", "Формат"),
+"col.gain": ("Volume", "Громк.", "Гучн."),
+"col.onipod": ("iPod", "iPod", "iPod"),
+"format.unsupported": ("%@ – no", "%@ – нет", "%@ – ні"),
+"format.unsupported.help": ("The iPod can't play this format", "iPod не воспроизводит этот формат", "iPod не відтворює цей формат"),
+
+"badge.new": ("New", "Новое", "Нове"),
+"badge.deleted": ("Delete", "Удалить", "Видалити"),
+"badge.edited": ("Tags changed", "Теги изменены", "Теги змінено"),
+"ctx.info": ("Info and tags…", "Сведения и теги…", "Відомості та теги…"),
+"ctx.delete": ("Delete from iPod", "Удалить с iPod", "Видалити з iPod"),
+"ctx.restore": ("Undo changes", "Отменить изменения", "Скасувати зміни"),
+
+"pending.add": ("+%ld", "+%ld", "+%ld"),
+"pending.delete": ("−%ld", "−%ld", "−%ld"),
+"pending.edit": ("edited %ld", "изменено %ld", "змінено %ld"),
+"pending.discard": ("Discard changes", "Отменить изменения", "Скасувати зміни"),
+
+"drop.title": ("Drop to add to the iPod", "Отпустите, чтобы добавить на iPod", "Відпустіть, щоб додати на iPod"),
+"drop.noipod": ("Connect an iPod first", "Сначала подключите iPod", "Спочатку підключіть iPod"),
+"drop.subtitle": ("Files and folders. FLAC, OGG and other unsupported formats are skipped.", "Файлы и папки. FLAC, OGG и другие неподдерживаемые форматы пропускаются.", "Файли та теки. FLAC, OGG та інші непідтримувані формати пропускаються."),
+"add.skipped.unsupported": ("Skipped files the iPod can't play: %ld", "Пропущено файлов, которые iPod не воспроизводит: %ld", "Пропущено файлів, які iPod не відтворює: %ld"),
+"add.skipped.duplicates": ("Skipped, already on the iPod: %ld", "Пропущено, уже есть на iPod: %ld", "Пропущено, вже є на iPod: %ld"),
+
+"cap.music": ("Music %@", "Музыка %@", "Музика %@"),
+"cap.adding": ("To write %@", "К записи %@", "До запису %@"),
+"cap.other": ("Other %@", "Другое %@", "Інше %@"),
+"cap.free": ("Free %@", "Свободно %@", "Вільно %@"),
+
+"tags.title": ("Info", "Сведения", "Відомості"),
+"tags.subtitle.one": ("Changes are saved when you write to the iPod", "Изменения сохранятся при записи на iPod", "Зміни збережуться під час запису на iPod"),
+"tags.subtitle.many": ("%ld songs selected – shared fields change for all of them", "Выбрано песен: %ld – общие поля меняются у всех сразу", "Вибрано пісень: %ld – спільні поля змінюються в усіх одразу"),
+"tags.footer": ("Tags are written to the iPod database", "Теги пишутся в базу iPod", "Теги записуються в базу iPod"),
+"tag.title": ("Title", "Название", "Назва"),
+"tag.artist": ("Artist", "Исполнитель", "Виконавець"),
+"tag.albumArtist": ("Album artist", "Исполнитель альбома", "Виконавець альбому"),
+"tag.album": ("Album", "Альбом", "Альбом"),
+"tag.genre": ("Genre", "Жанр", "Жанр"),
+"tag.composer": ("Composer", "Композитор", "Композитор"),
+"tag.year": ("Year", "Год", "Рік"),
+"tag.track": ("Track", "Трек", "Трек"),
+"tag.disc": ("Disc", "Диск", "Диск"),
+"tag.of": ("of", "из", "з"),
+"tag.compilation": ("Compilation of various artists", "Сборник разных исполнителей", "Збірка різних виконавців"),
+"tag.mixed": ("Mixed", "Разные значения", "Різні значення"),
+
+"sc.title": ("Volume leveling", "Выравнивание громкости", "Вирівнювання гучності"),
+"sc.subtitle": ("In batches, for songs already on the iPod", "Пакетно, для песен, уже записанных на iPod", "Пакетно, для пісень, які вже на iPod"),
+"sc.scope.all": ("Whole iPod · %ld", "Весь iPod · %ld", "Весь iPod · %ld"),
+"sc.scope.selected": ("Selected · %ld", "Выбранные · %ld", "Вибрані · %ld"),
+"sc.scope.missing": ("Not leveled yet · %ld", "Ещё не выровненные · %ld", "Ще не вирівняні · %ld"),
+"sc.mode.soundcheck": ("Sound Check – files stay untouched", "Sound Check – без изменения файлов", "Sound Check – файли не змінюються"),
+"sc.mode.soundcheck.text": ("The correction goes into the iPod database. Works for MP3 and AAC, can be undone. On the iPod: Settings › Sound Check – On.", "Поправка пишется в базу iPod. Работает для MP3 и AAC, можно отменить. На iPod: Настройки › Sound Check – Вкл.", "Поправка записується в базу iPod. Працює для MP3 і AAC, можна скасувати. На iPod: Налаштування › Sound Check – Увімк."),
+"sc.mode.files": ("Change the files – like MP3Gain", "Изменить сами файлы – как MP3Gain", "Змінити самі файли – як MP3Gain"),
+"sc.mode.files.text": ("Coming in the next version.", "Появится в следующей версии.", "З'явиться в наступній версії."),
+"sc.target": ("Target volume", "Целевая громкость", "Цільова гучність"),
+"sc.album": ("By album", "По альбомам", "За альбомами"),
+"sc.noclip": ("Prevent clipping", "Не допускать клиппинга", "Не допускати кліпінгу"),
+"sc.col.loudness": ("Loudness", "Громкость", "Гучність"),
+"sc.col.clip": ("Clipping", "Клиппинг", "Кліпінг"),
+"sc.col.gain": ("Correction", "Поправка", "Поправка"),
+"sc.empty": ("Press \"Analyze\" – the songs are read straight from the iPod.", "Нажмите «Анализировать» – песни читаются прямо с iPod.", "Натисніть «Аналізувати» – пісні читаються просто з iPod."),
+"sc.progress": ("Analyzing: %ld of %ld", "Анализ: %ld из %ld", "Аналіз: %ld з %ld"),
+"sc.finished": ("Analyzed: %ld", "Проанализировано: %ld", "Проаналізовано: %ld"),
+"sc.failed": ("Couldn't read: %ld", "Не удалось прочитать: %ld", "Не вдалося прочитати: %ld"),
+"sc.analyze": ("Analyze", "Анализировать", "Аналізувати"),
+"sc.stop": ("Stop", "Остановить", "Зупинити"),
+"sc.apply": ("Apply", "Применить", "Застосувати"),
+"sc.apply.count": ("Apply to %ld songs", "Применить (песен: %ld)", "Застосувати (пісень: %ld)"),
+
+"export.title": ("Export from iPod to Mac", "Экспорт с iPod на Mac", "Експорт з iPod на Mac"),
+"export.subtitle": ("Files get proper names and are sorted into folders", "Файлы получат нормальные имена и разложатся по папкам", "Файли отримають нормальні назви та розкладуться по теках"),
+"export.scope.all": ("Whole iPod", "Весь iPod", "Весь iPod"),
+"export.scope.selected": ("Selected · %ld", "Выбранное · %ld", "Вибране · %ld"),
+"export.where": ("Destination", "Куда", "Куди"),
+"export.nofolder": ("Folder not chosen", "Папка не выбрана", "Теку не вибрано"),
+"export.choose": ("Choose…", "Выбрать…", "Вибрати…"),
+"export.layout": ("Folder structure", "Структура папок", "Структура тек"),
+"export.layout.artistAlbumTrack": ("Album artist / Album / No. Title", "Исполнитель альбома / Альбом / № Название", "Виконавець альбому / Альбом / № Назва"),
+"export.layout.artistDashAlbumTrack": ("Artist – Album / No. Title", "Исполнитель – Альбом / № Название", "Виконавець – Альбом / № Назва"),
+"export.layout.flat": ("One folder: Artist – Title", "Одна папка: Исполнитель – Название", "Одна тека: Виконавець – Назва"),
+"export.skip": ("Skip songs that already exist in the folder", "Пропускать песни, которые уже есть в папке", "Пропускати пісні, які вже є в теці"),
+"export.note": ("On the iPod files are stored as iPod_Control/Music/F12/KQWZ.m4a – names are restored from the database.", "На iPod файлы хранятся как iPod_Control/Music/F12/KQWZ.m4a – имена восстанавливаются из базы.", "На iPod файли зберігаються як iPod_Control/Music/F12/KQWZ.m4a – назви відновлюються з бази."),
+"export.progress": ("Exporting: %ld of %ld", "Экспорт: %ld из %ld", "Експорт: %ld з %ld"),
+"export.finished": ("Copied %ld · skipped %ld · errors %ld", "Скопировано %ld · пропущено %ld · ошибок %ld", "Скопійовано %ld · пропущено %ld · помилок %ld"),
+"export.summary": ("%ld songs · %@", "Песен: %ld · %@", "Пісень: %ld · %@"),
+"export.start": ("Export", "Экспортировать", "Експортувати"),
+"export.show": ("Show in Finder", "Показать в Finder", "Показати у Finder"),
+
+"commit.preparing": ("Preparing…", "Подготовка…", "Підготовка…"),
+"commit.copying": ("Copying songs to the iPod", "Копирую песни на iPod", "Копіюю пісні на iPod"),
+"commit.writing": ("Saving the iPod database", "Сохраняю базу iPod", "Зберігаю базу iPod"),
+"commit.removing": ("Removing deleted songs", "Удаляю лишние файлы", "Видаляю зайві файли"),
+"commit.count": ("%ld of %ld", "%ld из %ld", "%ld з %ld"),
+"commit.dontunplug": ("Don't disconnect the iPod", "Не отключайте iPod", "Не відключайте iPod"),
+"commit.done": ("Done", "Готово", "Готово"),
+"commit.done.text": ("All changes are on the iPod. You can eject it now. A copy of the previous database is kept as iTunesDB.bak.", "Все изменения на iPod. Теперь его можно извлечь. Копия прежней базы сохранена как iTunesDB.bak.", "Усі зміни на iPod. Тепер його можна вилучити. Копію попередньої бази збережено як iTunesDB.bak."),
+"commit.failed": ("Couldn't write to the iPod", "Не удалось записать на iPod", "Не вдалося записати на iPod"),
+}
+
+def esc(s):
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Resources")
+for i, lang in enumerate(["en", "ru", "uk"]):
+    d = os.path.join(root, f"{lang}.lproj")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "Localizable.strings"), "w", encoding="utf-8") as f:
+        f.write("/* Generated by tools/strings.py – edit there. */\n\n")
+        for k in sorted(S):
+            f.write(f'"{k}" = "{esc(S[k][i])}";\n')
+print(len(S), "keys")

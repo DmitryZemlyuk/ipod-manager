@@ -1,0 +1,266 @@
+import SwiftUI
+import AppKit
+import ImageIO
+import IPodKit
+
+enum SheetKind: String, Identifiable {
+    case tags, soundCheck, export
+    var id: String { rawValue }
+}
+
+struct ContentView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var search = ""
+    @State private var macSelection = Set<String>()
+    @State private var ipodSelection = Set<String>()
+    @State private var sheet: SheetKind?
+    @State private var tagTargets = Set<String>()
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HSplitView {
+                MacPane(selection: $macSelection, search: search)
+                    .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.trailing, 5)
+                IPodPane(selection: $ipodSelection, search: search, onShowInfo: { ids in
+                    tagTargets = ids
+                    sheet = .tags
+                })
+                .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.leading, 5)
+            }
+            CapacityBar()
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+        .padding(.top, 4)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbar { toolbarContent }
+        .searchable(text: $search, placement: .toolbar, prompt: Text(L("search.prompt")))
+        .sheet(item: $sheet) { kind in
+            switch kind {
+            case .tags:
+                TagEditorSheet(rowIDs: tagTargets)
+            case .soundCheck:
+                SoundCheckSheet(selectedRowIDs: ipodSelection)
+            case .export:
+                ExportSheet(selectedRowIDs: ipodSelection)
+            }
+        }
+        .sheet(isPresented: $model.showCommitSheet) {
+            CommitSheet()
+        }
+        .alert(L("notice.title"), isPresented: Binding(
+            get: { model.notice != nil },
+            set: { if !$0 { model.notice = nil } }
+        )) {
+            Button(L("ok"), role: .cancel) { model.notice = nil }
+        } message: {
+            Text(model.notice ?? "")
+        }
+        .navigationTitle(L("app.title"))
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            DeviceChip()
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                sheet = .soundCheck
+            } label: {
+                Label(L("tool.soundcheck"), systemImage: "waveform")
+            }
+            .help(L("tool.soundcheck"))
+            .disabled(model.session == nil)
+
+            Button {
+                tagTargets = ipodSelection
+                sheet = .tags
+            } label: {
+                Label(L("tool.info"), systemImage: "info.circle")
+            }
+            .help(L("tool.info"))
+            .disabled(model.session == nil || ipodSelection.isEmpty)
+
+            Button {
+                sheet = .export
+            } label: {
+                Label(L("tool.export"), systemImage: "square.and.arrow.down")
+            }
+            .help(L("tool.export"))
+            .disabled(model.session == nil || model.tracks.isEmpty)
+
+            Button {
+                model.eject()
+            } label: {
+                Label(L("tool.eject"), systemImage: "eject")
+            }
+            .help(L("tool.eject"))
+            .disabled(model.device == nil)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.requestCommit()
+            } label: {
+                Text(L("write.button"))
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.canCommit)
+            .help(L("write.help"))
+        }
+    }
+}
+
+struct DeviceChip: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Menu {
+            if model.devices.isEmpty {
+                Text(L("ipod.none.title"))
+            }
+            ForEach(model.devices) { d in
+                Button {
+                    model.select(d)
+                } label: {
+                    if d == model.device {
+                        Label(d.volumeName, systemImage: "checkmark")
+                    } else {
+                        Text(d.volumeName)
+                    }
+                }
+            }
+            Divider()
+            Button(L("ipod.refresh")) { model.refreshDevices() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "ipod")
+                if let d = model.device {
+                    Text(d.volumeName).fontWeight(.semibold)
+                    if let cap = model.capacity {
+                        Text(formatBytes(cap.total)).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(L("ipod.none.short")).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(L("ipod.choose"))
+    }
+}
+
+/// Header strip shown on top of each pane.
+struct PaneHeader<Trailing: View>: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+            Text(title).font(.headline)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}
+
+extension View {
+    func paneBackground() -> some View {
+        self
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
+    }
+}
+
+/// Small cover art thumbnail loaded lazily from the file's tags.
+struct ArtworkThumb: View {
+    let url: URL?
+    var size: CGFloat = 26
+    @State private var image: NSImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color.secondary.opacity(0.15))
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "music.note")
+                    .font(.system(size: size * 0.42))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+        )
+        .task(id: url) {
+            image = nil
+            guard let url else { return }
+            image = await ArtworkCache.shared.image(for: url, pixels: Int(size * 2))
+        }
+    }
+}
+
+@MainActor
+final class ArtworkCache {
+    static let shared = ArtworkCache()
+    private let cache = NSCache<NSString, NSImage>()
+    private var missing = Set<String>()
+
+    init() {
+        cache.countLimit = 2000
+    }
+
+    func image(for url: URL, pixels: Int) async -> NSImage? {
+        let key = url.path as NSString
+        if let img = cache.object(forKey: key) { return img }
+        if missing.contains(url.path) { return nil }
+        let cg = await Task.detached(priority: .utility) { () -> CGImage? in
+            await ArtworkCache.thumbnail(url: url, pixels: pixels)
+        }.value
+        guard let cg else {
+            missing.insert(url.path)
+            return nil
+        }
+        let img = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        cache.setObject(img, forKey: key)
+        return img
+    }
+
+    nonisolated static func thumbnail(url: URL, pixels: Int) async -> CGImage? {
+        guard let data = await AudioMetaReader.artworkData(url: url),
+              let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(pixels, 16)
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+    }
+}
