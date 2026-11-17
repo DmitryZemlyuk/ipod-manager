@@ -36,6 +36,7 @@
 "at.state.fill" = "заполнится";
 "at.state.keep" = "останется как есть (уже заполнено)";
 "at.state.none" = "ничего не найдено";
+"at.state.otheralbum" = "пропущено (из другого альбома)";
 "at.state.replace" = "заменится";
 "at.state.same" = "уже совпадает";
 "at.subtitle" = "MusicBrainz по тегам и названиям, AcoustID по звуку";

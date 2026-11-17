@@ -317,15 +317,24 @@ struct AutoTagSheet: View {
         e.title = str(t.title, p.title, placeholder: AutoTagger.isJunkTitle(t.title))
         e.artist = str(t.artist, p.artist, placeholder: AutoTagger.isPlaceholderArtist(t.artist))
         e.album = str(t.album, p.album)
-        e.albumArtist = str(t.albumArtist, p.albumArtist)
         e.genre = str(t.genre, p.genre, force: replaceGenre)
-        e.year = num(t.year, p.year)
-        e.trackNumber = num(t.trackNumber, p.trackNumber)
-        e.trackCount = num(t.trackCount, p.trackCount)
-        e.discNumber = num(t.discNumber, p.discNumber)
-        e.discCount = num(t.discCount, p.discCount)
-        if p.compilation && !t.compilation { e.compilation = true }
+        // Year, numbers and album artist describe the found album. If the song keeps
+        // a different album name, writing them would mix two albums together.
+        if !albumMismatch(t, p, keepFilled: keepFilled) {
+            e.albumArtist = str(t.albumArtist, p.albumArtist)
+            e.year = num(t.year, p.year)
+            e.trackNumber = num(t.trackNumber, p.trackNumber)
+            e.trackCount = num(t.trackCount, p.trackCount)
+            e.discNumber = num(t.discNumber, p.discNumber)
+            e.discCount = num(t.discCount, p.discCount)
+            if p.compilation && !t.compilation { e.compilation = true }
+        }
         return e
+    }
+
+    /// The song stays in its current album, and the match belongs to another one.
+    static func albumMismatch(_ t: Track, _ p: TagProposal, keepFilled: Bool) -> Bool {
+        keepFilled && !t.album.isEmpty && !p.album.isEmpty && !AutoTagger.sameAlbum(t.album, p.album)
     }
 }
 
@@ -464,7 +473,7 @@ private struct GroupCard: View {
         let label: String
         let now: String
         let found: String
-        /// 0 same, 1 will be written, 2 kept as is, 3 nothing found
+        /// 0 same, 1 will be written, 2 kept as is, 3 nothing found, 4 skipped (other album)
         let state: Int
     }
 
@@ -485,8 +494,11 @@ private struct GroupCard: View {
             (L("tag.disc"), pair(n(t.discNumber), n(t.discCount)), pair(ni(p.discNumber), ni(p.discCount)),
              e.discNumber != nil || e.discCount != nil)
         ]
+        let mismatch = AutoTagSheet.albumMismatch(t, p, keepFilled: keepFilled)
         return specs.enumerated().map { i, s in
-            let state = s.3 ? 1 : (s.2.isEmpty ? 3 : (s.1 == s.2 ? 0 : 2))
+            var state = s.3 ? 1 : (s.2.isEmpty ? 3 : (s.1 == s.2 ? 0 : 2))
+            // rows 3 (album artist), 5 (year), 6 (track), 7 (disc) depend on the album
+            if mismatch, state == 2, [3, 5, 6, 7].contains(i) { state = 4 }
             return FieldRow(id: i, label: s.0, now: s.1, found: s.2, state: state)
         }
     }
@@ -498,6 +510,7 @@ private struct GroupCard: View {
         case 1: text = wasEmpty ? L("at.state.fill") : L("at.state.replace"); color = .green
         case 2: text = L("at.state.keep"); color = .orange
         case 3: text = L("at.state.none"); color = .secondary
+        case 4: text = L("at.state.otheralbum"); color = .orange
         default: text = L("at.state.same"); color = .secondary
         }
         return Text(text).foregroundStyle(color).fontWeight(state == 1 ? .semibold : .regular)

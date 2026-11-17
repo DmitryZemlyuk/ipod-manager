@@ -248,8 +248,7 @@ public final class AutoTagger: @unchecked Sendable {
         let best = options[0]
 
         // Genre from the release group when the songs have none.
-        if items.contains(where: { $0.genre.isEmpty }), options[0].proposals.values.allSatisfy({ $0.genre.isEmpty }),
-           let rg = options[0].releaseGroupID {
+        if options[0].proposals.values.allSatisfy({ $0.genre.isEmpty }), let rg = options[0].releaseGroupID {
             let genres = await attempt { try await self.client.releaseGroupGenres(id: rg) } ?? []
             if let g = AutoTagger.topGenre(genres) {
                 for k in options[0].proposals.keys { options[0].proposals[k]?.genre = g }
@@ -305,10 +304,14 @@ public final class AutoTagger: @unchecked Sendable {
             if item.durationMs > 0, let len = rec.length, abs(len - item.durationMs) > 7000 { continue }
             if source == .tags, !item.title.isEmpty,
                AutoTagger.titleSimilarity(item.title, rec.title ?? "") < 0.7 { continue }
-            guard let release = AutoTagger.preferredRelease(rec.releases ?? []),
+            // A release that is the album the song already belongs to wins over everything else.
+            let releases = rec.releases ?? []
+            let own = releases.filter { AutoTagger.sameAlbum(item.album, $0.title ?? "") }
+            guard let release = AutoTagger.preferredRelease(own.isEmpty ? releases : own),
                   let medium = release.media?.first,
                   let track = medium.track?.first else { continue }
-            let rank = AutoTagger.releaseRank(release)
+            var rank = AutoTagger.releaseRank(release)
+            if AutoTagger.sameAlbum(item.album, release.title ?? "") { rank += 16 }
             let date = (release.date ?? "").isEmpty ? "9999" : release.date!
             if best == nil || rank > best!.rank || (rank == best!.rank && date < best!.date) {
                 best = (rank, date, rec, release, medium, track)
@@ -397,6 +400,12 @@ public final class AutoTagger: @unchecked Sendable {
             }
         }
         return t.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// True when both names are non-empty and name the same album (ignoring "Deluxe Edition" etc.).
+    public static func sameAlbum(_ a: String, _ b: String) -> Bool {
+        guard !a.trimmingCharacters(in: .whitespaces).isEmpty, !b.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        return titleSimilarity(a, b) >= 0.85
     }
 
     /// Similarity that also accepts a match of the undecorated titles (slightly penalized).

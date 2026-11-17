@@ -96,6 +96,9 @@ final class AutoTaggerTests: XCTestCase {
         XCTAssertEqual(AutoTagger.baseTitle("Мама - Live"), "Мама")
         XCTAssertGreaterThan(AutoTagger.titleSimilarity("Bye Bye Bye - From Deadpool and Wolverine Soundtrack", "Bye Bye Bye"), 0.9)
         XCTAssertLessThan(AutoTagger.titleSimilarity("Angel - Live", "Teardrop"), 0.5)
+        XCTAssertTrue(AutoTagger.sameAlbum("No Strings Attached", "No Strings Attached (Deluxe Edition)"))
+        XCTAssertFalse(AutoTagger.sameAlbum("No Strings Attached", "Deadpool & Wolverine"))
+        XCTAssertFalse(AutoTagger.sameAlbum("", "Discovery"))
         XCTAssertEqual(MusicBrainzClient.escape("AC/DC: \"Back\""), "AC\\/DC\\: \\\"Back\\\"")
     }
 }
