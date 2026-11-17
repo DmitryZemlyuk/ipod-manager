@@ -39,7 +39,8 @@ final class LiveTests: XCTestCase {
         }
         let tagger = AutoTagger(client: client, acoustIDKey: nil, fpcalc: nil)
         let cases = [
-            item(1, "Bye Bye Bye", "*NSYNC", "No Strings Attached", ms: 200_000, nr: 1),
+            item(1, "Bye Bye Bye - From Deadpool and Wolverine Soundtrack", "*NSYNC", "No Strings Attached", ms: 200_000),
+            item(6, "Bye Bye Bye - From Deadpool and Wolverine Soundtrack", "*NSYNC", "", ms: 200_000),
             item(2, "It's Gonna Be Me", "*NSYNC", "No Strings Attached", ms: 192_000),
             item(3, "Teardrop", "Massive Attack", "Mezzanine", ms: 330_000),
             item(4, "Хочешь?", "Земфира", "Прости меня моя любовь", ms: 0),
@@ -47,6 +48,7 @@ final class LiveTests: XCTestCase {
         ]
         for c in cases {
             let groups = await tagger.run(items: [c], progress: { _, _ in })
+            if !tagger.errors.isEmpty { print("ERRORS", tagger.errors) }
             for g in groups {
                 print("GROUP", c.title, "→", g.status, g.options.count, g.options.first?.title ?? "-", g.options.first?.year ?? 0,
                       g.options.first?.proposals[c.id].map { "\($0)" } ?? "")

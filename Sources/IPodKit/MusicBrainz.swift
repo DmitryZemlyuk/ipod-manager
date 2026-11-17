@@ -2,9 +2,14 @@ import Foundation
 
 // MARK: - JSON models (MusicBrainz web service v2, fmt=json)
 
+public struct MBArtist: Decodable, Sendable {
+    public let genres: [MBGenre]?
+}
+
 public struct MBArtistCredit: Decodable, Sendable {
     public let name: String?
     public let joinphrase: String?
+    public let artist: MBArtist?
 }
 
 public struct MBGenre: Decodable, Sendable {
@@ -17,11 +22,17 @@ public struct MBReleaseGroup: Decodable, Sendable {
     public let primaryType: String?
     public let secondaryTypes: [String]?
     public let genres: [MBGenre]?
+    public let firstReleaseDate: String?
 
     enum CodingKeys: String, CodingKey {
         case id, genres
         case primaryType = "primary-type"
         case secondaryTypes = "secondary-types"
+        case firstReleaseDate = "first-release-date"
+    }
+
+    public var firstReleaseYear: Int? {
+        firstReleaseDate.flatMap { Int($0.prefix(4)) }.flatMap { $0 > 1000 ? $0 : nil }
     }
 }
 

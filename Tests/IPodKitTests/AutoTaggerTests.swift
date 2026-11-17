@@ -90,6 +90,12 @@ final class AutoTaggerTests: XCTestCase {
         XCTAssertEqual(AutoTagger.normalize("Ёлка – Прованс!"), "елка прованс")
         XCTAssertGreaterThan(AutoTagger.similarity("Do I Wanna Know?", "Do I Wanna Know"), 0.99)
         XCTAssertLessThan(AutoTagger.similarity("Teardrop", "Angel"), 0.5)
+        XCTAssertEqual(AutoTagger.baseTitle("Bye Bye Bye - From Deadpool and Wolverine Soundtrack"), "Bye Bye Bye")
+        XCTAssertEqual(AutoTagger.baseTitle("Stan (feat. Dido) [Explicit]"), "Stan")
+        XCTAssertEqual(AutoTagger.baseTitle("Numb feat. Jay-Z"), "Numb")
+        XCTAssertEqual(AutoTagger.baseTitle("Мама - Live"), "Мама")
+        XCTAssertGreaterThan(AutoTagger.titleSimilarity("Bye Bye Bye - From Deadpool and Wolverine Soundtrack", "Bye Bye Bye"), 0.9)
+        XCTAssertLessThan(AutoTagger.titleSimilarity("Angel - Live", "Teardrop"), 0.5)
         XCTAssertEqual(MusicBrainzClient.escape("AC/DC: \"Back\""), "AC\\/DC\\: \\\"Back\\\"")
     }
 }

@@ -10,6 +10,8 @@ final class AutoTagJob: ObservableObject {
     @Published var finished = false
     @Published var checked = Set<String>()
     @Published var choice: [String: String] = [:]   // group id → release id
+    @Published var errorCount = 0
+    @Published var lastError = ""
     private var task: Task<Void, Never>?
     private var generation = 0
 
@@ -20,6 +22,8 @@ final class AutoTagJob: ObservableObject {
         choice = [:]
         done = 0
         total = 0
+        errorCount = 0
+        lastError = ""
         running = true
         finished = false
         generation += 1
@@ -32,12 +36,18 @@ final class AutoTagJob: ObservableObject {
                     guard self.generation == gen else { return }
                     self.done = d
                     self.total = t
+                    let errs = tagger.errors
+                    self.errorCount = errs.count
+                    self.lastError = errs.last ?? ""
                 }
             }, onGroup: { g in
                 Task { @MainActor in self.add(g, gen) }
             })
             guard self.generation == gen else { return }
             for g in result { self.add(g, gen) }
+            let errs = tagger.errors
+            self.errorCount = errs.count
+            self.lastError = errs.last ?? ""
             self.running = false
             self.finished = !Task.isCancelled
         }
@@ -207,10 +217,11 @@ struct AutoTagSheet: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         } else {
+            let tracks = tracksByID
             ScrollView {
                 LazyVStack(spacing: 10) {
                     ForEach(visibleGroups) { g in
-                        GroupCard(group: g, job: job, tracks: tracksByID, keepFilled: keepFilled, replaceGenre: replaceGenre)
+                        GroupCard(group: g, job: job, tracks: tracks, keepFilled: keepFilled, replaceGenre: replaceGenre)
                     }
                 }
                 .padding(.vertical, 2)
@@ -220,6 +231,15 @@ struct AutoTagSheet: View {
 
     @ViewBuilder
     private var progress: some View {
+        if job.errorCount > 0 {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(LF("at.errors", job.errorCount) + " " + job.lastError)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
         if job.running {
             VStack(alignment: .leading, spacing: 6) {
                 Text(LF("at.progress", job.done, max(job.total, job.done)))
@@ -316,6 +336,8 @@ private struct GroupCard: View {
     let keepFilled: Bool
     let replaceGenre: Bool
 
+    @State private var expanded = false
+
     private var option: ReleaseOption? { job.option(for: group) }
 
     var body: some View {
@@ -338,11 +360,25 @@ private struct GroupCard: View {
                         .lineLimit(1)
                     badge
                 }
-                if let option {
-                    changes(option)
-                }
                 if group.options.count > 1 {
                     editions
+                }
+                if let option {
+                    changes(option)
+                    Button {
+                        expanded.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            Text(expanded ? L("at.details.hide") : L("at.details.show"))
+                        }
+                        .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    if expanded {
+                        details(option)
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -403,6 +439,8 @@ private struct GroupCard: View {
         return VStack(alignment: .leading, spacing: 3) {
             if lines.isEmpty {
                 Text(L("at.nochanges")).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(L("at.willchange")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 HStack(spacing: 4) {
@@ -420,6 +458,92 @@ private struct GroupCard: View {
     }
 
     private struct Line { let label: String; let old: String; let new: String }
+
+    private struct FieldRow: Identifiable {
+        let id: Int
+        let label: String
+        let now: String
+        let found: String
+        /// 0 same, 1 will be written, 2 kept as is, 3 nothing found
+        let state: Int
+    }
+
+    private func fieldRows(_ t: Track, _ p: TagProposal) -> [FieldRow] {
+        let e = AutoTagSheet.edit(for: t, proposal: p, keepFilled: keepFilled, replaceGenre: replaceGenre)
+        func n(_ v: UInt32) -> String { v > 0 ? String(v) : "" }
+        func ni(_ v: Int) -> String { v > 0 ? String(v) : "" }
+        func pair(_ a: String, _ b: String) -> String { b.isEmpty ? a : (a.isEmpty ? "" : a + " / " + b) }
+        let specs: [(String, String, String, Bool)] = [
+            (L("tag.title"), t.title, p.title, e.title != nil),
+            (L("tag.artist"), t.artist, p.artist, e.artist != nil),
+            (L("tag.album"), t.album, p.album, e.album != nil),
+            (L("tag.albumArtist"), t.albumArtist, p.albumArtist, e.albumArtist != nil),
+            (L("tag.genre"), t.genre, p.genre, e.genre != nil),
+            (L("tag.year"), n(t.year), ni(p.year), e.year != nil),
+            (L("tag.track"), pair(n(t.trackNumber), n(t.trackCount)), pair(ni(p.trackNumber), ni(p.trackCount)),
+             e.trackNumber != nil || e.trackCount != nil),
+            (L("tag.disc"), pair(n(t.discNumber), n(t.discCount)), pair(ni(p.discNumber), ni(p.discCount)),
+             e.discNumber != nil || e.discCount != nil)
+        ]
+        return specs.enumerated().map { i, s in
+            let state = s.3 ? 1 : (s.2.isEmpty ? 3 : (s.1 == s.2 ? 0 : 2))
+            return FieldRow(id: i, label: s.0, now: s.1, found: s.2, state: state)
+        }
+    }
+
+    private func stateView(_ state: Int, wasEmpty: Bool) -> some View {
+        let text: String
+        let color: Color
+        switch state {
+        case 1: text = wasEmpty ? L("at.state.fill") : L("at.state.replace"); color = .green
+        case 2: text = L("at.state.keep"); color = .orange
+        case 3: text = L("at.state.none"); color = .secondary
+        default: text = L("at.state.same"); color = .secondary
+        }
+        return Text(text).foregroundStyle(color).fontWeight(state == 1 ? .semibold : .regular)
+    }
+
+    /// Full comparison: every field of every song, what is there now, what was found and what happens.
+    private func details(_ option: ReleaseOption) -> some View {
+        let songs: [(Track, TagProposal)] = group.itemIDs.compactMap { id in
+            guard let t = tracks[id], let p = option.proposals[id] else { return nil }
+            return (t, p)
+        }
+        .sorted { ($0.1.discNumber, $0.1.trackNumber) < ($1.1.discNumber, $1.1.trackNumber) }
+        return VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(songs.prefix(40).enumerated()), id: \.offset) { _, song in
+                VStack(alignment: .leading, spacing: 4) {
+                    if songs.count > 1 {
+                        Text(song.0.title).font(.caption.weight(.semibold))
+                    }
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 3) {
+                        GridRow {
+                            Text(L("at.col.field"))
+                            Text(L("at.col.now"))
+                            Text(L("at.col.found"))
+                            Text(L("at.col.result"))
+                        }
+                        .foregroundStyle(.tertiary)
+                        ForEach(fieldRows(song.0, song.1)) { r in
+                            GridRow {
+                                Text(r.label).foregroundStyle(.secondary)
+                                Text(r.now.isEmpty ? "–" : r.now).lineLimit(1)
+                                Text(r.found.isEmpty ? "–" : r.found).lineLimit(1)
+                                stateView(r.state, wasEmpty: r.now.isEmpty)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            if songs.count > 40 {
+                Text(LF("at.more", songs.count - 40)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     /// Album-level changes from the first song, plus a count of per-song changes.
     private func summary(_ option: ReleaseOption) -> [Line] {
