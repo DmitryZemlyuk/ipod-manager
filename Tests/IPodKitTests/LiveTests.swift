@@ -100,14 +100,33 @@ final class LiveTests: XCTestCase {
             p.waitUntilExit()
             XCTAssertEqual(p.terminationStatus, 0, name)
             let original = Bytes(try Data(contentsOf: mp3))
-            let before = try Loudness.analyze(url: mp3).integrated
+            // Core Audio refuses some variants (CRC-protected frames); those get the structural checks only.
+            let before = try? Loudness.analyze(url: mp3).integrated
+            if before == nil { print("MP3GAIN", name, "not decodable by Core Audio, structural checks only") }
             for steps in [-4, 3] {
                 let out = dir.appendingPathComponent("\(name)-\(steps).mp3")
                 let (changed, result) = try MP3Gain.apply(to: original, steps: steps)
                 try Data(changed).write(to: out)
-                let after = try Loudness.analyze(url: out).integrated
-                print("MP3GAIN", name, "steps", steps, "frames", result.frames, "LUFS", before, "→", after, "delta", after - before)
-                XCTAssertEqual(after - before, Double(steps) * 1.5, accuracy: 0.15, "\(name) \(steps)")
+                XCTAssertGreaterThan(result.frames, 100, name)
+                if let before {
+                    let after = try Loudness.analyze(url: out).integrated
+                    print("MP3GAIN", name, "steps", steps, "frames", result.frames, "LUFS", before, "→", after, "delta", after - before)
+                    XCTAssertEqual(after - before, Double(steps) * 1.5, accuracy: 0.15, "\(name) \(steps)")
+                } else {
+                    let t = MP3Gain.tail(changed)
+                    for f in try MP3Gain.frames(changed, audioEnd: t.audioEnd) where f.hasCRC {
+                        let crc = MP3Gain.crc16(changed, [(f.offset + 2)..<(f.offset + 4), f.sideInfo..<(f.sideInfo + f.sideLength)])
+                        XCTAssertEqual(UInt16(changed[f.offset + 4]) << 8 | UInt16(changed[f.offset + 5]), crc, name)
+                    }
+                    // lame's own CRCs must verify with the same routine, otherwise the check above proves nothing
+                    let t0 = MP3Gain.tail(original)
+                    let crcFrames = try MP3Gain.frames(original, audioEnd: t0.audioEnd).filter { $0.hasCRC }
+                    print("MP3GAIN", name, "steps", steps, "frames", result.frames, "crc frames", crcFrames.count)
+                    for f in crcFrames.prefix(50) {
+                        let crc = MP3Gain.crc16(original, [(f.offset + 2)..<(f.offset + 4), f.sideInfo..<(f.sideInfo + f.sideLength)])
+                        XCTAssertEqual(UInt16(original[f.offset + 4]) << 8 | UInt16(original[f.offset + 5]), crc, "lame crc \(name)")
+                    }
+                }
                 XCTAssertEqual(try XCTUnwrap(MP3Gain.undo(changed)), original, "\(name) undo")
             }
         }
