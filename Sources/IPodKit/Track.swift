@@ -45,6 +45,35 @@ public struct Track: Sendable {
     public var lastSkipped: UInt32 { get { header.u32(160) } set { header.setU32(160, newValue) } }
     public var mediaType: UInt32 { get { header.u32(208) } set { header.setU32(208, newValue) } }
 
+    // MARK: artwork link
+
+    public var artworkCount: UInt16 { get { header.u16(124) } set { header.setU16(124, newValue) } }
+    public var artworkSize: UInt32 { get { header.u32(128) } set { header.setU32(128, newValue) } }
+    /// 1 = has artwork, 2 = none.
+    public var hasArtworkFlag: UInt8 { get { header.u8(164) } set { header.setU8(164, newValue) } }
+    /// Id of the image item (mhii) in ArtworkDB.
+    public var mhiiLink: UInt32 {
+        get { header.count >= 356 ? header.u32(352) : 0 }
+        set {
+            if header.count < Track.defaultHeaderLength { header.ensureSize(Track.defaultHeaderLength) }
+            header.setU32(352, newValue)
+        }
+    }
+
+    public mutating func setArtwork(imageID: UInt32, sourceSize: UInt32) {
+        mhiiLink = imageID
+        artworkCount = 1
+        artworkSize = sourceSize
+        hasArtworkFlag = 1
+    }
+
+    public mutating func clearArtwork() {
+        mhiiLink = 0
+        artworkCount = 0
+        artworkSize = 0
+        hasArtworkFlag = 2
+    }
+
     // MARK: strings
 
     public func string(_ type: UInt32) -> String? {

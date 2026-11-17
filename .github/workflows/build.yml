@@ -26,7 +26,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         env:
           LIVE_TESTS: "1"
-        run: swift test --filter LiveTests 2>&1 | tail -150
+        run: |
+          brew install lame >/dev/null 2>&1 || true
+          swift test --filter LiveTests 2>&1 | tail -150
       - name: Fetch fpcalc (Chromaprint, for AcoustID)
         continue-on-error: true
         env:

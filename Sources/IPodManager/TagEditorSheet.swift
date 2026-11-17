@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import IPodKit
 
 enum TagField: Hashable, CaseIterable {
@@ -81,20 +83,53 @@ struct TagEditorSheet: View {
     @State private var form = TagForm()
     @State private var mixed = Set<TagField>()
     @State private var count = 0
+    @State private var artChoice: ArtworkChange?
+    @State private var dropTargeted = false
 
-    private var firstURL: URL? {
-        model.ipodRows.first { rowIDs.contains($0.id) }?.fileURL
+    private var artSource: ArtSource? {
+        switch artChoice {
+        case .set(let d): return .data(d)
+        case .remove: return nil
+        case nil:
+            guard let row = model.ipodRows.first(where: { rowIDs.contains($0.id) }) else { return nil }
+            return model.artSource(for: row)
+        }
     }
+
+    private var artworkSupported: Bool { model.session?.artworkSupported ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 14) {
-                ArtworkThumb(url: firstURL, size: 56)
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 16) {
+                ArtworkThumb(source: artSource, size: 96)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 4]))
+                            .opacity(dropTargeted ? 1 : 0)
+                    )
+                    .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in
+                        guard artworkSupported, let p = providers.first else { return false }
+                        loadImage(p)
+                        return true
+                    }
+                VStack(alignment: .leading, spacing: 6) {
                     Text(L("tags.title")).font(.title3.weight(.semibold))
                     Text(count > 1 ? LF("tags.subtitle.many", count) : L("tags.subtitle.one"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    if artworkSupported {
+                        HStack(spacing: 8) {
+                            Button(L("art.choose")) { chooseImage() }
+                            Button(L("art.remove")) { artChoice = .remove }
+                            if artChoice != nil {
+                                Button(L("art.revert")) { artChoice = nil }
+                            }
+                        }
+                        .controlSize(.small)
+                        Text(L("art.hint")).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(L("art.unsupported")).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
             }
@@ -141,7 +176,7 @@ struct TagEditorSheet: View {
                 Button(L("save")) { save() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(form == initial)
+                    .disabled(form == initial && artChoice == nil)
             }
             .padding(20)
         }
@@ -196,6 +231,38 @@ struct TagEditorSheet: View {
             }
         }
         model.applyEdit(e, to: rowIDs)
+        if let artChoice { model.setArtwork(artChoice, rowIDs: rowIDs) }
         dismiss()
+    }
+
+    private func useImage(_ data: Data?) {
+        guard let data, ArtworkCache.thumbnail(data: data, pixels: 32) != nil else {
+            model.notice = L("art.badimage")
+            return
+        }
+        artChoice = .set(data)
+    }
+
+    private func chooseImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            useImage(try? Data(contentsOf: url))
+        }
+    }
+
+    private func loadImage(_ provider: NSItemProvider) {
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                let data = url.flatMap { try? Data(contentsOf: $0) }
+                Task { @MainActor in useImage(data) }
+            }
+        } else {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                Task { @MainActor in useImage(data) }
+            }
+        }
     }
 }

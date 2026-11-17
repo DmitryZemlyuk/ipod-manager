@@ -55,4 +55,61 @@ final class LiveTests: XCTestCase {
             }
         }
     }
+
+    /// Needs `lame` (brew install lame): encodes real MP3s and checks that the measured loudness
+    /// moves by exactly the requested number of 1.5 dB steps and that undo is bit-exact.
+    func testRealMP3Gain() throws {
+        guard ProcessInfo.processInfo.environment["LIVE_TESTS"] == "1" else { throw XCTSkip("live tests off") }
+        let lame = ["/opt/homebrew/bin/lame", "/usr/local/bin/lame"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let lame else { throw XCTSkip("lame not installed") }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ipm-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 6 s stereo WAV: two sines at -12 dBFS, 44.1 kHz, 16 bit
+        let rate = 44100, n = rate * 6
+        var pcm = Data(capacity: n * 4)
+        for i in 0..<n {
+            let t = Double(i) / Double(rate)
+            let v = 0.25 * (0.6 * sin(2 * .pi * 440 * t) + 0.4 * sin(2 * .pi * 1500 * t))
+            let s = Int16(max(-1, min(1, v)) * 32767)
+            for _ in 0..<2 { pcm.append(UInt8(truncatingIfNeeded: s)); pcm.append(UInt8(truncatingIfNeeded: s >> 8)) }
+        }
+        var wav = Bytes()
+        wav.append(contentsOf: Array("RIFF".utf8)); wav.appendU32(UInt32(36 + pcm.count)); wav.append(contentsOf: Array("WAVEfmt ".utf8))
+        wav.appendU32(16); wav.append(contentsOf: [1, 0, 2, 0]); wav.appendU32(UInt32(rate)); wav.appendU32(UInt32(rate * 4))
+        wav.append(contentsOf: [4, 0, 16, 0]); wav.append(contentsOf: Array("data".utf8)); wav.appendU32(UInt32(pcm.count))
+        let wavURL = dir.appendingPathComponent("in.wav")
+        try (Data(wav) + pcm).write(to: wavURL)
+
+        let variants: [(String, [String])] = [
+            ("cbr-stereo", ["-b", "128"]),
+            ("vbr-joint", ["-V", "2"]),
+            ("crc", ["-b", "160", "-p"]),
+            ("mono", ["-b", "96", "-m", "m"]),
+            ("mpeg2", ["-b", "64", "--resample", "22.05"]),
+            ("mpeg25-mono", ["-b", "32", "--resample", "11.025", "-m", "m"]),
+            ("id3", ["-b", "128", "--add-id3v2", "--tt", "Title", "--ta", "Artist", "--id3v1-only"])
+        ]
+        for (name, args) in variants {
+            let mp3 = dir.appendingPathComponent(name + ".mp3")
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: lame)
+            p.arguments = ["--quiet"] + args + [wavURL.path, mp3.path]
+            try p.run()
+            p.waitUntilExit()
+            XCTAssertEqual(p.terminationStatus, 0, name)
+            let original = Bytes(try Data(contentsOf: mp3))
+            let before = try Loudness.analyze(url: mp3).integrated
+            for steps in [-4, 3] {
+                let out = dir.appendingPathComponent("\(name)-\(steps).mp3")
+                let (changed, result) = try MP3Gain.apply(to: original, steps: steps)
+                try Data(changed).write(to: out)
+                let after = try Loudness.analyze(url: out).integrated
+                print("MP3GAIN", name, "steps", steps, "frames", result.frames, "LUFS", before, "→", after, "delta", after - before)
+                XCTAssertEqual(after - before, Double(steps) * 1.5, accuracy: 0.15, "\(name) \(steps)")
+                XCTAssertEqual(try XCTUnwrap(MP3Gain.undo(changed)), original, "\(name) undo")
+            }
+        }
+    }
 }

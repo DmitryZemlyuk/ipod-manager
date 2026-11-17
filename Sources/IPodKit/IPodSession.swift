@@ -21,15 +21,63 @@ public enum IPodSessionError: Error, LocalizedError {
 public struct NewTrack: Sendable {
     public var sourceURL: URL
     public var meta: AudioMeta
+    /// Cover image file data (JPEG/PNG), if any.
+    public var artwork: Data?
 
-    public init(sourceURL: URL, meta: AudioMeta) {
+    public init(sourceURL: URL, meta: AudioMeta, artwork: Data? = nil) {
         self.sourceURL = sourceURL
         self.meta = meta
+        self.artwork = artwork
     }
+}
+
+public enum ArtworkChange: Sendable, Equatable {
+    case set(Data)
+    case remove
+}
+
+/// Lossless volume change of an MP3 file plus the Sound Check values that go with it.
+public struct FileGainRequest: Sendable, Equatable {
+    public var steps: Int
+    /// Sound Check value to use when the file could not be changed.
+    public var fullSoundCheck: UInt32
+    /// Sound Check value for what the 1.5 dB steps could not cover.
+    public var residualSoundCheck: UInt32
+
+    public init(steps: Int, fullSoundCheck: UInt32, residualSoundCheck: UInt32) {
+        self.steps = steps
+        self.fullSoundCheck = fullSoundCheck
+        self.residualSoundCheck = residualSoundCheck
+    }
+}
+
+public struct CommitChanges: Sendable {
+    public var adds: [NewTrack] = []
+    public var deletes: Set<UInt32> = []
+    public var edits: [UInt32: TrackEdit] = [:]
+    public var artwork: [UInt32: ArtworkChange] = [:]
+    public var fileGain: [UInt32: FileGainRequest] = [:]
+    public var fileGainUndo: Set<UInt32> = []
+
+    public init() {}
+}
+
+public struct CommitReport: Sendable, Equatable {
+    public var artworkWritten = 0
+    public var artworkFailed = 0
+    /// The iPod's artwork database is of a kind we don't write.
+    public var artworkUnsupported = false
+    public var filesChanged = 0
+    public var filesRestored = 0
+    public var filesFailed = 0
+
+    public init() {}
 }
 
 public enum CommitPhase: Equatable, Sendable {
     case copying(done: Int, total: Int, name: String)
+    case changingFiles(done: Int, total: Int)
+    case writingArtwork
     case writingDatabase
     case removingFiles
     case finished
@@ -39,8 +87,7 @@ public enum CommitPhase: Equatable, Sendable {
 public final class IPodSession: @unchecked Sendable {
     public let device: IPodDevice
     public private(set) var db: ITunesDB
-    /// Play Counts were merged into `db` in memory; the file is removed after the next write.
-    private var mergedPlayCounts = false
+    public private(set) var artworkDB: ArtworkDB?
     public private(set) var databaseExisted: Bool
 
     public init(device: IPodDevice) throws {
@@ -55,7 +102,6 @@ public final class IPodSession: @unchecked Sendable {
                 if entries.count == tracks.count {
                     PlayCounts.merge(entries, into: &tracks)
                     db.tracks = tracks
-                    mergedPlayCounts = true
                 }
             }
             self.db = db
@@ -64,18 +110,20 @@ public final class IPodSession: @unchecked Sendable {
             self.db = ITunesDB.makeEmpty(name: device.volumeName)
             databaseExisted = false
         }
+        artworkDB = device.loadArtworkDB()
     }
 
     public var tracks: [Track] { db.tracks }
 
     // MARK: Commit
 
-    public func commit(adds: [NewTrack],
-                       deletes: Set<UInt32>,
-                       edits: [UInt32: TrackEdit],
-                       progress: (CommitPhase) -> Void) throws {
+    @discardableResult
+    public func commit(_ changes: CommitChanges, progress: (CommitPhase) -> Void) throws -> CommitReport {
         let fm = FileManager.default
         var newDB = db
+        var report = CommitReport()
+        let adds = changes.adds
+        let deletes = changes.deletes
 
         // 1. Space check.
         let needed = adds.reduce(Int64(0)) { $0 + max($1.meta.fileSize, 0) }
@@ -86,51 +134,103 @@ public final class IPodSession: @unchecked Sendable {
         }
 
         // 2. Tag edits.
-        if !edits.isEmpty {
+        if !changes.edits.isEmpty {
             var tracks = newDB.tracks
             for i in tracks.indices {
-                if let e = edits[tracks[i].uniqueID] { e.apply(to: &tracks[i]) }
+                if let e = changes.edits[tracks[i].uniqueID] { e.apply(to: &tracks[i]) }
             }
             newDB.tracks = tracks
         }
 
         // 3. Removals (files are deleted only after the DB is safely written).
-        let removedPaths = newDB.tracks.filter { deletes.contains($0.uniqueID) }.map { $0.relativePath }
+        let removedTracks = newDB.tracks.filter { deletes.contains($0.uniqueID) }
+        let removedPaths = removedTracks.map { $0.relativePath }
         newDB.removeTracks(ids: deletes)
 
-        // 4. Copy new files.
         var created: [URL] = []
+        var artwork = changes.artwork
         do {
-            let folders = try musicFolders()
-            var counts = folders.map { (try? fm.contentsOfDirectory(atPath: $0.path).count) ?? 0 }
-            var nextID = max(newDB.nextTrackID, db.nextTrackID)
+            // 4. Copy new files.
             var tracks = newDB.tracks
-            for (n, add) in adds.enumerated() {
-                progress(.copying(done: n, total: adds.count, name: add.meta.title.isEmpty ? add.sourceURL.lastPathComponent : add.meta.title))
-                let fi = counts.indices.min { counts[$0] < counts[$1] } ?? 0
-                let folder = folders[fi]
-                let ext = add.sourceURL.pathExtension.isEmpty ? add.meta.kind.fileExtension : add.sourceURL.pathExtension.lowercased()
-                var dest: URL
-                repeat {
-                    dest = folder.appendingPathComponent(IPodSession.randomName() + "." + ext)
-                } while fm.fileExists(atPath: dest.path)
-                do {
-                    try fm.copyItem(at: add.sourceURL, to: dest)
-                } catch {
-                    throw IPodSessionError.copyFailed(add.sourceURL.lastPathComponent, error)
+            if !adds.isEmpty {
+                let folders = try musicFolders()
+                var counts = folders.map { (try? fm.contentsOfDirectory(atPath: $0.path).count) ?? 0 }
+                var nextID = max(newDB.nextTrackID, db.nextTrackID)
+                for (n, add) in adds.enumerated() {
+                    progress(.copying(done: n, total: adds.count, name: add.meta.title.isEmpty ? add.sourceURL.lastPathComponent : add.meta.title))
+                    let fi = counts.indices.min { counts[$0] < counts[$1] } ?? 0
+                    let folder = folders[fi]
+                    let ext = add.sourceURL.pathExtension.isEmpty ? add.meta.kind.fileExtension : add.sourceURL.pathExtension.lowercased()
+                    var dest: URL
+                    repeat {
+                        dest = folder.appendingPathComponent(IPodSession.randomName() + "." + ext)
+                    } while fm.fileExists(atPath: dest.path)
+                    do {
+                        try fm.copyItem(at: add.sourceURL, to: dest)
+                    } catch {
+                        throw IPodSessionError.copyFailed(add.sourceURL.lastPathComponent, error)
+                    }
+                    created.append(dest)
+                    counts[fi] += 1
+                    let size = (try? fm.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.int64Value ?? add.meta.fileSize
+                    let rel = "iPod_Control/Music/\(folder.lastPathComponent)/\(dest.lastPathComponent)"
+                    tracks.append(Track.make(meta: add.meta, uniqueID: nextID, relativePath: rel,
+                                             fileSize: UInt32(clamping: size)))
+                    if let art = add.artwork { artwork[nextID] = .set(art) }
+                    nextID += 1
                 }
-                created.append(dest)
-                counts[fi] += 1
-                let size = (try? fm.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.int64Value ?? add.meta.fileSize
-                let rel = "iPod_Control/Music/\(folder.lastPathComponent)/\(dest.lastPathComponent)"
-                tracks.append(Track.make(meta: add.meta, uniqueID: nextID, relativePath: rel,
-                                         fileSize: UInt32(clamping: size)))
-                nextID += 1
+                progress(.copying(done: adds.count, total: adds.count, name: ""))
             }
-            if !adds.isEmpty { progress(.copying(done: adds.count, total: adds.count, name: "")) }
+
+            // 5. Lossless volume changes inside MP3 files.
+            let gainTotal = changes.fileGain.count + changes.fileGainUndo.count
+            if gainTotal > 0 {
+                var done = 0
+                progress(.changingFiles(done: 0, total: gainTotal))
+                for i in tracks.indices {
+                    let id = tracks[i].uniqueID
+                    let url = device.fileURL(for: tracks[i])
+                    if let req = changes.fileGain[id] {
+                        do {
+                            if req.steps != 0 {
+                                let size = try MP3Gain.applyToFile(url, steps: req.steps)
+                                tracks[i].size = UInt32(clamping: size)
+                                report.filesChanged += 1
+                            }
+                            tracks[i].soundCheck = req.residualSoundCheck
+                        } catch {
+                            tracks[i].soundCheck = req.fullSoundCheck
+                            report.filesFailed += 1
+                        }
+                        tracks[i].timeModified = MacTime.now()
+                        done += 1
+                        progress(.changingFiles(done: done, total: gainTotal))
+                    } else if changes.fileGainUndo.contains(id) {
+                        do {
+                            if let size = try MP3Gain.undoFile(url) {
+                                tracks[i].size = UInt32(clamping: size)
+                                tracks[i].soundCheck = 0
+                                tracks[i].timeModified = MacTime.now()
+                                report.filesRestored += 1
+                            }
+                        } catch {
+                            report.filesFailed += 1
+                        }
+                        done += 1
+                        progress(.changingFiles(done: done, total: gainTotal))
+                    }
+                }
+            }
+
+            // 6. Cover art.
+            let hadImages = removedTracks.contains { artworkDB?.hasImage(imageID: $0.mhiiLink, songID: $0.dbid) == true }
+            if !artwork.isEmpty || hadImages {
+                progress(.writingArtwork)
+                applyArtwork(tracks: &tracks, changes: artwork, removed: removedTracks, report: &report)
+            }
             newDB.tracks = tracks
 
-            // 5. Playlists + database.
+            // 7. Playlists + database.
             progress(.writingDatabase)
             newDB.rebuildMasterPlaylists()
             try write(newDB)
@@ -139,11 +239,10 @@ public final class IPodSession: @unchecked Sendable {
             throw error
         }
 
-        // 6. Cleanup after a successful write.
+        // 8. Cleanup after a successful write.
         // Play Counts entries are indexed by track position, so they are stale after any write.
-        // They were merged above when they matched the old database.
+        // They were merged at load time when they matched the old database.
         try? fm.removeItem(at: device.playCountsURL)
-        mergedPlayCounts = false
         if let items = try? fm.contentsOfDirectory(atPath: device.iTunesURL.path) {
             for name in items where name.hasPrefix("OTGPlaylistInfo") {
                 try? fm.removeItem(at: device.iTunesURL.appendingPathComponent(name))
@@ -158,7 +257,125 @@ public final class IPodSession: @unchecked Sendable {
         db = newDB
         databaseExisted = true
         progress(.finished)
+        return report
     }
+
+    // MARK: Artwork
+
+    /// Whether cover art can be written to this iPod.
+    public var artworkSupported: Bool {
+        if let db = artworkDB { return db.isWritable }
+        if FileManager.default.fileExists(atPath: device.artworkDBURL.path) { return false } // exists but unreadable
+        // No database yet: fine for an iPod Video; refuse models we know to be something else.
+        let model = device.sysInfo["ModelNumStr"] ?? ""
+        return model.isEmpty || device.looksLikeVideoModel
+    }
+
+    func applyArtwork(tracks: inout [Track], changes: [UInt32: ArtworkChange], removed: [Track], report: inout CommitReport) {
+        let sets = changes.values.filter { if case .set = $0 { return true } else { return false } }.count
+        guard artworkSupported else {
+            report.artworkUnsupported = true
+            report.artworkFailed += sets
+            return
+        }
+        let fm = FileManager.default
+        var adb = artworkDB ?? ArtworkDB.makeEmpty()
+        var working = tracks
+        var written = 0, failed = 0
+        do {
+            try fm.createDirectory(at: device.artworkURL, withIntermediateDirectories: true)
+            for t in removed { adb.removeImage(imageID: t.mhiiLink, songID: t.dbid) }
+            var rendered: [Data: [ArtworkDB.ThumbRef]] = [:]
+            var unreadable = Set<Data>()
+            for i in working.indices {
+                guard let change = changes[working[i].uniqueID] else { continue }
+                switch change {
+                case .remove:
+                    adb.removeImage(imageID: working[i].mhiiLink, songID: working[i].dbid)
+                    working[i].clearArtwork()
+                case .set(let data):
+                    if unreadable.contains(data) { failed += 1; continue }
+                    var refs = rendered[data]
+                    if refs == nil {
+                        var pixels: [(ArtworkFormat, Data)] = []
+                        for f in ArtworkFormat.video {
+                            if let p = ArtworkPixels.rgb565(from: data, width: f.width, height: f.height) { pixels.append((f, p)) }
+                        }
+                        if pixels.count == ArtworkFormat.video.count {
+                            var made: [ArtworkDB.ThumbRef] = []
+                            for (f, p) in pixels { made.append(try appendThumb(p, format: f)) }
+                            refs = made
+                            rendered[data] = made
+                        } else {
+                            unreadable.insert(data)
+                        }
+                    }
+                    guard let refs else { failed += 1; continue }
+                    if working[i].dbid == 0 { working[i].dbid = UInt64.random(in: 1...UInt64.max) }
+                    adb.removeImage(imageID: working[i].mhiiLink, songID: working[i].dbid)
+                    let id = adb.addImage(songID: working[i].dbid, sourceSize: UInt32(clamping: data.count), thumbs: refs)
+                    working[i].setArtwork(imageID: id, sourceSize: UInt32(clamping: data.count))
+                    written += 1
+                }
+            }
+            adb.ensureFiles(ArtworkFormat.video)
+            try writeArtworkDB(adb)
+        } catch {
+            // Cover art is optional: keep the songs, report the problem.
+            report.artworkFailed += sets
+            return
+        }
+        tracks = working
+        artworkDB = adb
+        report.artworkWritten += written
+        report.artworkFailed += failed
+    }
+
+    static let ithmbLimit = 256 * 1024 * 1024
+
+    func appendThumb(_ pixels: Data, format: ArtworkFormat) throws -> ArtworkDB.ThumbRef {
+        let fm = FileManager.default
+        let prefix = "F\(format.id)_"
+        let names = (try? fm.contentsOfDirectory(atPath: device.artworkURL.path)) ?? []
+        var index = names.compactMap { n -> Int? in
+            guard n.hasPrefix(prefix), n.hasSuffix(".ithmb") else { return nil }
+            return Int(n.dropFirst(prefix.count).dropLast(6))
+        }.max() ?? 1
+        func url(_ i: Int) -> URL { device.artworkURL.appendingPathComponent("\(prefix)\(i).ithmb") }
+        func size(_ i: Int) -> Int {
+            let attrs = try? fm.attributesOfItem(atPath: url(i).path)
+            return (attrs?[.size] as? NSNumber)?.intValue ?? 0
+        }
+        if size(index) + pixels.count > IPodSession.ithmbLimit { index += 1 }
+        let file = url(index)
+        if !fm.fileExists(atPath: file.path) { fm.createFile(atPath: file.path, contents: nil) }
+        let h = try FileHandle(forWritingTo: file)
+        defer { try? h.close() }
+        let offset = try h.seekToEnd()
+        try h.write(contentsOf: pixels)
+        return ArtworkDB.ThumbRef(formatID: format.id, offset: Int(offset), size: pixels.count,
+                                  fileName: ":\(prefix)\(index).ithmb")
+    }
+
+    func writeArtworkDB(_ adb: ArtworkDB) throws {
+        let fm = FileManager.default
+        let bytes = adb.serialize()
+        let check = try ArtworkDB.parse(bytes)
+        guard check.imageCount == adb.imageCount else { throw ArtworkDBError.bad("verification failed") }
+        let target = device.artworkDBURL
+        let tmp = device.artworkURL.appendingPathComponent("ArtworkDB.ipm-tmp")
+        let bak = device.artworkURL.appendingPathComponent("ArtworkDB.bak")
+        try? fm.removeItem(at: tmp)
+        try Data(bytes).write(to: tmp)
+        if fm.fileExists(atPath: target.path) {
+            try? fm.removeItem(at: bak)
+            try fm.copyItem(at: target, to: bak)
+            try fm.removeItem(at: target)
+        }
+        try fm.moveItem(at: tmp, to: target)
+    }
+
+    // MARK: iTunesDB
 
     /// Writes iTunesDB atomically, keeping the previous version as iTunesDB.bak.
     func write(_ newDB: ITunesDB) throws {

@@ -205,11 +205,36 @@ extension View {
     }
 }
 
-/// Small cover art thumbnail loaded lazily from the file's tags.
+/// Where a thumbnail comes from. `key` identifies the picture for caching.
+struct ArtSource: Sendable {
+    let key: String
+    let load: @Sendable () async -> CGImage?
+
+    static func file(_ url: URL?) -> ArtSource? {
+        guard let url else { return nil }
+        return ArtSource(key: "file:" + url.path) { await ArtworkCache.thumbnail(url: url, pixels: 112) }
+    }
+
+    static func data(_ data: Data) -> ArtSource {
+        ArtSource(key: "data:\(data.count):\(data.hashValue)") { ArtworkCache.thumbnail(data: data, pixels: 112) }
+    }
+}
+
+/// Small cover art thumbnail, loaded lazily.
 struct ArtworkThumb: View {
-    let url: URL?
+    let source: ArtSource?
     var size: CGFloat = 26
     @State private var image: NSImage?
+
+    init(url: URL?, size: CGFloat = 26) {
+        self.source = ArtSource.file(url)
+        self.size = size
+    }
+
+    init(source: ArtSource?, size: CGFloat = 26) {
+        self.source = source
+        self.size = size
+    }
 
     var body: some View {
         ZStack {
@@ -227,15 +252,15 @@ struct ArtworkThumb: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: size > 40 ? 8 : 4, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
+            RoundedRectangle(cornerRadius: size > 40 ? 8 : 4, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
-        .task(id: url) {
+        .task(id: source?.key) {
             image = nil
-            guard let url else { return }
-            image = await ArtworkCache.shared.image(for: url, pixels: Int(size * 2))
+            guard let source else { return }
+            image = await ArtworkCache.shared.image(for: source)
         }
     }
 }
@@ -247,18 +272,18 @@ final class ArtworkCache {
     private var missing = Set<String>()
 
     init() {
-        cache.countLimit = 2000
+        cache.countLimit = 3000
     }
 
-    func image(for url: URL, pixels: Int) async -> NSImage? {
-        let key = url.path as NSString
+    func image(for source: ArtSource) async -> NSImage? {
+        let key = source.key as NSString
         if let img = cache.object(forKey: key) { return img }
-        if missing.contains(url.path) { return nil }
-        let cg = await Task.detached(priority: .utility) { () -> CGImage? in
-            await ArtworkCache.thumbnail(url: url, pixels: pixels)
-        }.value
+        if missing.contains(source.key) { return nil }
+        let load = source.load
+        let cg = await Task.detached(priority: .utility) { await load() }.value
         guard let cg else {
-            missing.insert(url.path)
+            if missing.count > 20000 { missing.removeAll() }
+            missing.insert(source.key)
             return nil
         }
         let img = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
@@ -266,14 +291,49 @@ final class ArtworkCache {
         return img
     }
 
-    nonisolated static func thumbnail(url: URL, pixels: Int) async -> CGImage? {
-        guard let data = await AudioMetaReader.artworkData(url: url),
-              let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+    nonisolated static func thumbnail(data: Data, pixels: Int) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: max(pixels, 16)
         ]
         return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+    }
+
+    nonisolated static func thumbnail(url: URL, pixels: Int) async -> CGImage? {
+        guard let data = await AudioMetaReader.artworkData(url: url) else { return nil }
+        return thumbnail(data: data, pixels: pixels)
+    }
+}
+
+extension AppModel {
+    /// Thumbnail for a row of the iPod list: queued cover → cover stored on the iPod → cover inside the file.
+    func artSource(for row: IPodRow) -> ArtSource? {
+        if let pid = row.pendingID {
+            if let add = pendingAdds.first(where: { $0.id == pid }) {
+                switch add.artwork {
+                case .set(let d): return .data(d)
+                case .remove: return nil
+                case nil: break
+                }
+            }
+            return .file(row.fileURL)
+        }
+        guard let id = row.trackID else { return nil }
+        switch pendingArtwork[id] {
+        case .set(let d): return .data(d)
+        case .remove: return nil
+        case nil: break
+        }
+        guard let device else { return nil }
+        let db = artworkDB
+        let url = row.fileURL
+        let imageID = row.imageID, dbid = row.dbid
+        return ArtSource(key: "ipod:\(device.id):\(id):\(artVersion)") {
+            if let db, let img = device.thumbnail(db, imageID: imageID, songID: dbid) { return img }
+            guard let url else { return nil }
+            return await ArtworkCache.thumbnail(url: url, pixels: 112)
+        }
     }
 }

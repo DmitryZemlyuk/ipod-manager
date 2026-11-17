@@ -21,6 +21,8 @@ struct PendingAdd: Identifiable {
     let id = UUID()
     var url: URL
     var meta: AudioMeta
+    /// nil = use the cover embedded in the file.
+    var artwork: ArtworkChange?
 }
 
 enum RowStatus: Int, Hashable {
@@ -40,6 +42,8 @@ struct IPodRow: Identifiable, Hashable {
     var status: RowStatus
     var statusSort: Int { status.rawValue }
     var fileURL: URL?
+    var imageID: UInt32 = 0
+    var dbid: UInt64 = 0
 }
 
 enum CommitState: Equatable {
@@ -67,7 +71,16 @@ final class AppModel: ObservableObject {
     @Published var pendingAdds: [PendingAdd] = [] { didSet { rebuildRows() } }
     @Published var pendingDeletes: Set<UInt32> = [] { didSet { rebuildRows() } }
     @Published var pendingEdits: [UInt32: TrackEdit] = [:] { didSet { rebuildRows() } }
+    @Published var pendingArtwork: [UInt32: ArtworkChange] = [:] { didSet { rebuildRows() } }
+    @Published var pendingFileGain: [UInt32: FileGainRequest] = [:] { didSet { rebuildRows() } }
+    @Published var pendingFileUndo: Set<UInt32> = [] { didSet { rebuildRows() } }
     @Published private(set) var ipodRows: [IPodRow] = []
+    /// Snapshot of the iPod's cover database, for thumbnails.
+    @Published private(set) var artworkDB: ArtworkDB?
+    /// Changes whenever covers on the iPod may have changed (busts the thumbnail cache).
+    @Published private(set) var artVersion = 0
+    @Published private(set) var lastReport = CommitReport()
+    @Published private(set) var coverScan: (done: Int, total: Int)?
 
     @Published private(set) var macFolder: URL
     @Published private(set) var macTracks: [LocalTrack] = []
@@ -112,6 +125,7 @@ final class AppModel: ObservableObject {
         if device != nil {
             device = nil
             session = nil
+            artworkDB = nil
             tracks = []
             clearPending()
             capacity = nil
@@ -123,6 +137,7 @@ final class AppModel: ObservableObject {
         if d == device, session != nil || loading { return }
         device = d
         session = nil
+        artworkDB = nil
         loadError = nil
         tracks = []
         clearPending()
@@ -135,6 +150,8 @@ final class AppModel: ObservableObject {
                     guard self.device == d else { return }
                     self.session = s
                     self.tracks = s.tracks
+                    self.artworkDB = s.artworkDB
+                    self.artVersion += 1
                     self.loading = false
                     self.refreshOnIPodFlags()
                 }
@@ -170,7 +187,16 @@ final class AppModel: ObservableObject {
 
     // MARK: - Pending changes
 
-    var hasPending: Bool { !pendingAdds.isEmpty || !pendingDeletes.isEmpty || !pendingEdits.isEmpty }
+    var hasPending: Bool {
+        !pendingAdds.isEmpty || !pendingDeletes.isEmpty || !pendingEdits.isEmpty
+            || !pendingArtwork.isEmpty || !pendingFileGain.isEmpty || !pendingFileUndo.isEmpty
+    }
+
+    /// Songs with any queued change other than add/delete.
+    var pendingChangedCount: Int {
+        Set(pendingEdits.keys).union(pendingArtwork.keys).union(pendingFileGain.keys).union(pendingFileUndo)
+            .subtracting(pendingDeletes).count
+    }
     var canCommit: Bool { hasPending && session != nil && !commitState.isRunning }
     var pendingAddBytes: Int64 { pendingAdds.reduce(0) { $0 + $1.meta.fileSize } }
     var pendingDeleteBytes: Int64 {
@@ -182,6 +208,9 @@ final class AppModel: ObservableObject {
         pendingAdds = []
         pendingDeletes = []
         pendingEdits = [:]
+        pendingArtwork = [:]
+        pendingFileGain = [:]
+        pendingFileUndo = []
     }
 
     func discardPending() {
@@ -229,13 +258,15 @@ final class AppModel: ObservableObject {
         for t in tracks {
             let e = effective(t)
             let gain = SoundCheck.gain(forValue: e.soundCheck)
-            let status: RowStatus = pendingDeletes.contains(t.uniqueID) ? .deleted
-                : (pendingEdits[t.uniqueID] != nil ? .edited : .normal)
+            let id = t.uniqueID
+            let changed = pendingEdits[id] != nil || pendingArtwork[id] != nil
+                || pendingFileGain[id] != nil || pendingFileUndo.contains(id)
+            let status: RowStatus = pendingDeletes.contains(id) ? .deleted : (changed ? .edited : .normal)
             rows.append(IPodRow(id: "t\(t.uniqueID)", trackID: t.uniqueID, pendingID: nil,
                                 title: e.title, artist: e.artist, album: e.album,
                                 durationMs: Int(e.durationMs), gainSort: gain ?? -999,
                                 gainLabel: formatGain(gain), status: status,
-                                fileURL: device?.fileURL(for: t)))
+                                fileURL: device?.fileURL(for: t), imageID: t.mhiiLink, dbid: t.dbid))
         }
         for a in pendingAdds {
             rows.append(IPodRow(id: "n\(a.id.uuidString)", trackID: nil, pendingID: a.id,
@@ -267,6 +298,9 @@ final class AppModel: ObservableObject {
         for id in ids {
             pendingDeletes.remove(id)
             pendingEdits[id] = nil
+            pendingArtwork[id] = nil
+            pendingFileGain[id] = nil
+            pendingFileUndo.remove(id)
         }
         refreshOnIPodFlags()
     }
@@ -300,7 +334,87 @@ final class AppModel: ObservableObject {
         refreshOnIPodFlags()
     }
 
+    // MARK: - Artwork
+
+    func hasArtwork(_ t: Track) -> Bool {
+        switch pendingArtwork[t.uniqueID] {
+        case .set: return true
+        case .remove: return false
+        case nil: return artworkDB?.hasImage(imageID: t.mhiiLink, songID: t.dbid) ?? false
+        }
+    }
+
+    func setArtwork(_ change: ArtworkChange, rowIDs: Set<String>) {
+        var map = pendingArtwork
+        for id in trackIDs(for: rowIDs) { map[id] = change }
+        pendingArtwork = map
+        let pend = pendingIDs(for: rowIDs)
+        if !pend.isEmpty {
+            var adds = pendingAdds
+            for i in adds.indices where pend.contains(adds[i].id) { adds[i].artwork = change }
+            pendingAdds = adds
+        }
+    }
+
+    func applyArtwork(_ covers: [UInt32: Data]) {
+        guard !covers.isEmpty else { return }
+        var map = pendingArtwork
+        for (id, d) in covers { map[id] = .set(d) }
+        pendingArtwork = map
+    }
+
+    /// Queues the covers embedded in the files for every song that has none on the iPod.
+    func addCoversFromFiles() {
+        guard let device, coverScan == nil else { return }
+        let targets = tracks.filter { !pendingDeletes.contains($0.uniqueID) && !hasArtwork($0) }
+            .map { (id: $0.uniqueID, url: device.fileURL(for: $0)) }
+        guard !targets.isEmpty else {
+            notice = L("covers.none")
+            return
+        }
+        coverScan = (0, targets.count)
+        Task {
+            var found: [UInt32: Data] = [:]
+            for (n, t) in targets.enumerated() {
+                if let d = await AudioMetaReader.artworkData(url: t.url) { found[t.id] = d }
+                if n % 20 == 0 { self.coverScan = (n, targets.count) }
+                if self.device != device { break }
+            }
+            self.coverScan = nil
+            guard self.device == device else { return }
+            self.applyArtwork(found)
+            self.notice = LF("covers.found", found.count, targets.count)
+        }
+    }
+
+    // MARK: - Volume
+
+    func applyFileGain(_ requests: [UInt32: FileGainRequest]) {
+        guard !requests.isEmpty else { return }
+        var map = pendingFileGain
+        var undo = pendingFileUndo
+        for (id, r) in requests {
+            map[id] = r
+            undo.remove(id)
+        }
+        pendingFileGain = map
+        pendingFileUndo = undo
+    }
+
+    func queueFileUndo(_ ids: [UInt32]) {
+        guard !ids.isEmpty else { return }
+        var map = pendingFileGain
+        for id in ids { map[id] = nil }
+        pendingFileGain = map
+        pendingFileUndo.formUnion(ids)
+    }
+
     func applySoundCheck(_ values: [UInt32: UInt32]) {
+        if !pendingFileGain.isEmpty {
+            var map = pendingFileGain
+            for id in values.keys { map[id] = nil }
+            pendingFileGain = map
+        }
         var edits = pendingEdits
         for (id, v) in values {
             var e = TrackEdit()
@@ -485,21 +599,44 @@ final class AppModel: ObservableObject {
 
     private func commit() {
         guard let s = session else { return }
-        let adds = pendingAdds.map { NewTrack(sourceURL: $0.url, meta: $0.meta) }
-        let deletes = pendingDeletes
-        let edits = pendingEdits
-        commitState = .running(adds.isEmpty ? .writingDatabase : .copying(done: 0, total: adds.count, name: ""))
+        let pending = pendingAdds
+        var changes = CommitChanges()
+        changes.deletes = pendingDeletes
+        changes.edits = pendingEdits
+        changes.artwork = pendingArtwork.filter { !pendingDeletes.contains($0.key) }
+        changes.fileGain = pendingFileGain.filter { !pendingDeletes.contains($0.key) }
+        changes.fileGainUndo = pendingFileUndo.subtracting(pendingDeletes)
+        commitState = .running(pending.isEmpty ? .writingDatabase : .copying(done: 0, total: pending.count, name: ""))
+        let base = changes
         Task.detached(priority: .userInitiated) {
+            // Covers of new songs come from the files themselves unless the user chose otherwise.
+            var changes = base
+            var adds: [NewTrack] = []
+            for a in pending {
+                var art: Data?
+                switch a.artwork {
+                case .set(let d): art = d
+                case .remove: art = nil
+                case nil: art = await AudioMetaReader.artworkData(url: a.url)
+                }
+                adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art))
+            }
+            changes.adds = adds
+            let final = changes
             do {
-                try s.commit(adds: adds, deletes: deletes, edits: edits) { phase in
+                let report = try s.commit(final) { phase in
                     guard phase != .finished else { return }
                     Task { @MainActor in
                         guard self.commitState.isRunning else { return }
                         self.commitState = .running(phase)
                     }
                 }
+                let adb = s.artworkDB
                 await MainActor.run {
                     self.tracks = s.tracks
+                    self.artworkDB = adb
+                    self.artVersion += 1
+                    self.lastReport = report
                     self.clearPending()
                     self.capacity = s.device.capacity
                     self.commitState = .done

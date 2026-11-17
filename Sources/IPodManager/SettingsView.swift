@@ -29,6 +29,7 @@ enum Prefs {
     static let scAlbumMode = "scAlbumMode"
     static let scPreventClipping = "scPreventClipping"
     static let acoustIDKey = "acoustIDKey"
+    static let scChangeFiles = "scChangeFiles"
 }
 
 struct SettingsView: View {

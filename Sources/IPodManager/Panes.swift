@@ -173,7 +173,7 @@ struct IPodPane: View {
         var parts: [String] = []
         if !model.pendingAdds.isEmpty { parts.append(LF("pending.add", model.pendingAdds.count)) }
         if !model.pendingDeletes.isEmpty { parts.append(LF("pending.delete", model.pendingDeletes.count)) }
-        if !model.pendingEdits.isEmpty { parts.append(LF("pending.edit", model.pendingEdits.count)) }
+        if model.pendingChangedCount > 0 { parts.append(LF("pending.edit", model.pendingChangedCount)) }
         return parts.joined(separator: " · ")
     }
 
@@ -206,7 +206,7 @@ struct IPodPane: View {
     private var table: some View {
         Table(of: IPodRow.self, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("") { (r: IPodRow) in
-                ArtworkThumb(url: r.fileURL)
+                ArtworkThumb(source: model.artSource(for: r))
                     .opacity(r.status == .deleted ? 0.4 : 1)
             }
             .width(30)
