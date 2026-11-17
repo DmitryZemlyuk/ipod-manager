@@ -9,8 +9,8 @@ final class ArtworkAndGainTests: XCTestCase {
 
     func png(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, width: Int = 300, height: Int = 300) -> Data {
         let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
-        ctx.setFillColor(CGColor(red: r, green: g, blue: b, alpha: 1))
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.setFillColor(CGColor(srgbRed: r, green: g, blue: b, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let out = NSMutableData()
         let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil)!

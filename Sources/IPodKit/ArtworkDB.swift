@@ -322,7 +322,8 @@ public enum ArtworkPixels {
         var rgba = [UInt8](repeating: 0, count: width * height * 4)
         let ok: Bool = rgba.withUnsafeMutableBytes { buf in
             guard let ctx = CGContext(data: buf.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                      bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bytesPerRow: width * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
             ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
             ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
@@ -374,7 +375,7 @@ public enum ArtworkPixels {
         let rgba = unpack565([UInt8](data.prefix(width * height * 2)))
         guard let provider = CGDataProvider(data: Data(rgba) as CFData) else { return nil }
         return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-                       space: CGColorSpaceCreateDeviceRGB(),
+                       space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }
