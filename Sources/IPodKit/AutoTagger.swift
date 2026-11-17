@@ -226,21 +226,26 @@ public final class AutoTagger: @unchecked Sendable {
                 proposals[id] = AutoTagger.proposal(release: full, medium: m.0, track: m.1)
             }
             options.append(AutoTagger.option(full, coverage: coverage, proposals: proposals))
-            if coverage == 1, full.totalTracks == items.count { break }
+            if coverage == 1, !useCount || full.totalTracks == items.count { break }
         }
         guard !options.isEmpty else { return (nil, items) }
 
-        options.sort { a, b in
-            if abs(a.coverage - b.coverage) > 0.001 { return a.coverage > b.coverage }
-            if useCount {
+        if useCount {
+            options.sort { a, b in
+                if abs(a.coverage - b.coverage) > 0.001 { return a.coverage > b.coverage }
                 let da = abs(a.trackCount - items.count), db = abs(b.trackCount - items.count)
                 if da != db { return da < db }
+                return (a.year ?? 9999) < (b.year ?? 9999)
             }
-            return (a.year ?? 9999) < (b.year ?? 9999)
+            // Keep alternatives only when they are as good as the best one.
+            let best = options[0]
+            options = [best] + options.dropFirst().filter { abs($0.coverage - best.coverage) < 0.001 && $0.trackCount != best.trackCount }
+        } else {
+            // A few songs can't tell editions apart: take the top-ranked one (official, earliest).
+            let top = options.map { $0.coverage }.max() ?? 0
+            options = [options.first { $0.coverage >= top - 0.001 } ?? options[0]]
         }
-        // Keep alternatives only when they are as good as the best one.
         let best = options[0]
-        options = [best] + options.dropFirst().filter { abs($0.coverage - best.coverage) < 0.001 && $0.trackCount != best.trackCount }
 
         // Genre from the release group when the songs have none.
         if items.contains(where: { $0.genre.isEmpty }), options[0].proposals.values.allSatisfy({ $0.genre.isEmpty }),
