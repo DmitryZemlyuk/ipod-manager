@@ -112,11 +112,12 @@ public enum Loudness {
         var peak: Float = 0
 
         init(channels: Int, sampleRate: Double) {
-            channelCount = max(channels, 1)
+            let count = max(channels, 1)
+            channelCount = count
             segmentLength = max(Int(sampleRate * 0.1), 1)
-            let f = kWeighting(sampleRate: sampleRate)
-            filters = Array(repeating: f, count: channelCount)
-            weights = (0..<channelCount).map { Loudness.channelWeight($0, of: channelCount) }
+            let f = Loudness.kWeighting(sampleRate: sampleRate)
+            filters = Array(repeating: f, count: count)
+            weights = (0..<count).map { Loudness.channelWeight($0, of: count) }
         }
 
         mutating func process(frameCount: Int, sample: (Int, Int) -> Float) {
