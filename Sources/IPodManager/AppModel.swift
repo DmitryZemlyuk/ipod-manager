@@ -627,6 +627,7 @@ final class AppModel: ObservableObject {
         changes.fileGainUndo = pendingFileUndo.subtracting(pendingDeletes)
         commitState = .running(pending.isEmpty ? .writingDatabase : .copying(done: 0, total: pending.count, name: ""))
         let base = changes
+        let readCovers = artworkSupported
         Task.detached(priority: .userInitiated) {
             // Covers of new songs come from the files themselves unless the user chose otherwise.
             var changes = base
@@ -636,7 +637,8 @@ final class AppModel: ObservableObject {
                 switch a.artwork {
                 case .set(let d): art = d
                 case .remove: art = nil
-                case nil: art = await AudioMetaReader.artworkData(url: a.url).flatMap { ArtworkPixels.normalized($0) }
+                case nil:
+                    art = readCovers ? await AudioMetaReader.artworkData(url: a.url).flatMap { ArtworkPixels.normalized($0) } : nil
                 }
                 adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art))
             }

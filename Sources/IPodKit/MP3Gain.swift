@@ -307,8 +307,17 @@ public enum MP3Gain {
         }
     }
 
+    static let maxFileSize = 300 * 1024 * 1024
+
+    static func checkSize(_ url: URL) throws {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
+        if size > maxFileSize { throw MP3GainError.unsupported("file is too large") }
+    }
+
     /// Changes a file on disk. Returns its new size.
     public static func applyToFile(_ url: URL, steps: Int) throws -> Int {
+        try checkSize(url)
         let data = Bytes(try Data(contentsOf: url))
         let (out, _) = try apply(to: data, steps: steps)
         try replace(url, with: out)
@@ -317,6 +326,7 @@ public enum MP3Gain {
 
     /// Restores a file on disk. Returns its new size, or nil when there was nothing to undo.
     public static func undoFile(_ url: URL) throws -> Int? {
+        try checkSize(url)
         let data = Bytes(try Data(contentsOf: url))
         guard let out = try undo(data) else { return nil }
         try replace(url, with: out)
