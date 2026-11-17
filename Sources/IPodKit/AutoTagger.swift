@@ -251,9 +251,11 @@ public final class AutoTagger: @unchecked Sendable {
             }
         }
         for oi in options.indices {
-            for k in options[oi].proposals.keys where options[oi].proposals[k]?.genre.isEmpty == true {
-                options[oi].proposals[k]?.genre = options[oi].proposals[k]?.artistGenre ?? ""
+            var fixed = options[oi].proposals
+            for (k, p) in fixed where p.genre.isEmpty && !p.artistGenre.isEmpty {
+                fixed[k]?.genre = p.artistGenre
             }
+            options[oi].proposals = fixed
         }
 
         matchedBest = Set(options[0].proposals.keys)
