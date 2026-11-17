@@ -27,6 +27,11 @@ struct IPodManagerApp: App {
                 Button(L("pending.discard")) { model.discardPending() }
                     .disabled(!model.hasPending)
                 Divider()
+                Button(model.coverScan.map { LF("covers.scanning", $0.done, $0.total) } ?? L("covers.fromfiles")) {
+                    model.addCoversFromFiles()
+                }
+                .disabled(model.session == nil || model.coverScan != nil || model.commitState.isRunning)
+                Divider()
                 Button(L("tool.eject")) { model.eject() }
                     .keyboardShortcut("e", modifiers: [.command])
                     .disabled(model.device == nil)

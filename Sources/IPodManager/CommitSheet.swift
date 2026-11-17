@@ -39,6 +39,8 @@ struct CommitSheet: View {
         case .running(let phase):
             switch phase {
             case .copying: return L("commit.copying")
+            case .changingFiles: return L("commit.files")
+            case .writingArtwork: return L("commit.artwork")
             case .writingDatabase: return L("commit.writing")
             case .removingFiles: return L("commit.removing")
             case .finished: return L("commit.writing")
@@ -62,6 +64,17 @@ struct CommitSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        case .running(.changingFiles(let done, let total)):
+            VStack(spacing: 6) {
+                ProgressView(value: Double(done), total: Double(max(total, 1)))
+                HStack {
+                    Text(L("commit.dontunplug"))
+                    Spacer()
+                    Text(LF("commit.count", done, total)).monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         case .running, .idle:
             ProgressView().controlSize(.small)
             Text(L("commit.dontunplug")).font(.caption).foregroundStyle(.secondary)
@@ -70,6 +83,17 @@ struct CommitSheet: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            let lines = reportLines
+            if !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(lines, id: \.self) { Text($0) }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
         case .failed(let message):
             Text(message)
                 .font(.callout)
@@ -77,6 +101,21 @@ struct CommitSheet: View {
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
         }
+    }
+
+    private var reportLines: [String] {
+        let r = model.lastReport
+        var out: [String] = []
+        if r.artworkWritten > 0 { out.append(LF("report.art.ok", r.artworkWritten)) }
+        if r.artworkUnsupported {
+            out.append(L("report.art.unsupported"))
+        } else if r.artworkFailed > 0 {
+            out.append(LF("report.art.failed", r.artworkFailed))
+        }
+        if r.filesChanged > 0 { out.append(LF("report.files.ok", r.filesChanged)) }
+        if r.filesRestored > 0 { out.append(LF("report.files.restored", r.filesRestored)) }
+        if r.filesFailed > 0 { out.append(LF("report.files.failed", r.filesFailed)) }
+        return out
     }
 
     @ViewBuilder

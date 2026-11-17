@@ -87,8 +87,20 @@ struct AutoTagSheet: View {
     @AppStorage(Prefs.acoustIDKey) private var acoustIDKey = ""
     @AppStorage("autoTagKeepFilled") private var keepFilled = true
     @AppStorage("autoTagReplaceGenre") private var replaceGenre = false
+    @AppStorage("autoTagAddCovers") private var addCovers = true
+    @AppStorage("autoTagReplaceCovers") private var replaceCovers = false
     @State private var scope: Scope = .all
     @State private var filter: Filter = .all
+    @State private var coverProgress: (done: Int, total: Int)?
+
+    private var coversPossible: Bool { addCovers && (model.artworkSupported) }
+
+    /// Whether a cover should be fetched for this song (given the found tags).
+    private func wantsCover(_ t: Track, _ p: TagProposal) -> Bool {
+        guard coversPossible else { return false }
+        if AutoTagSheet.albumMismatch(t, p, keepFilled: keepFilled) { return false }
+        return replaceCovers || !model.hasArtwork(t)
+    }
 
     private var fpcalc: URL? { Bundle.main.url(forAuxiliaryExecutable: "fpcalc") }
 
@@ -221,7 +233,8 @@ struct AutoTagSheet: View {
             ScrollView {
                 LazyVStack(spacing: 10) {
                     ForEach(visibleGroups) { g in
-                        GroupCard(group: g, job: job, tracks: tracks, keepFilled: keepFilled, replaceGenre: replaceGenre)
+                        GroupCard(group: g, job: job, tracks: tracks, keepFilled: keepFilled, replaceGenre: replaceGenre,
+                                  wantsCover: wantsCover)
                     }
                 }
                 .padding(.vertical, 2)
@@ -251,11 +264,20 @@ struct AutoTagSheet: View {
     }
 
     private var optionsRow: some View {
-        HStack(spacing: 22) {
-            Toggle(L("at.keepfilled"), isOn: $keepFilled)
-            Toggle(L("at.replacegenre"), isOn: $replaceGenre)
-                .disabled(!keepFilled)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 22) {
+                Toggle(L("at.keepfilled"), isOn: $keepFilled)
+                Toggle(L("at.replacegenre"), isOn: $replaceGenre)
+                    .disabled(!keepFilled)
+            }
+            HStack(spacing: 22) {
+                Toggle(L("at.addcovers"), isOn: $addCovers)
+                Toggle(L("at.replacecovers"), isOn: $replaceCovers)
+                    .disabled(!addCovers)
+            }
+            .disabled(!(model.artworkSupported))
         }
+        .disabled(coverProgress != nil)
     }
 
     private var footer: some View {
@@ -269,23 +291,108 @@ struct AutoTagSheet: View {
                 .disabled(items(scope).isEmpty)
             }
             Spacer()
-            Text(L("at.nowrite"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if let cp = coverProgress {
+                ProgressView().controlSize(.small)
+                Text(LF("at.covers.progress", cp.done, cp.total))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(L("at.nowrite"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Button(L("cancel"), role: .cancel) {
                 job.cancel()
                 dismiss()
             }
             .keyboardShortcut(.cancelAction)
             let edits = computeEdits()
-            Button(edits.isEmpty ? L("sc.apply") : LF("sc.apply.count", edits.count)) {
-                model.applyEdits(edits)
-                dismiss()
+            let covers = coverTargets()
+            let songs = Set(edits.keys).union(covers.flatMap { $0.trackIDs }).count
+            Button(songs == 0 ? L("sc.apply") : LF("sc.apply.count", songs)) {
+                apply(edits: edits, covers: covers)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
-            .disabled(edits.isEmpty)
+            .disabled(songs == 0 || coverProgress != nil)
         }
+    }
+
+    struct CoverTarget: Sendable {
+        let releaseID: String
+        let releaseGroupID: String?
+        let trackIDs: [UInt32]
+    }
+
+    private func coverTargets() -> [CoverTarget] {
+        guard coversPossible else { return [] }
+        let tracks = tracksByID
+        var out: [CoverTarget] = []
+        for g in job.groups where job.checked.contains(g.id) {
+            guard let opt = job.option(for: g) else { continue }
+            let ids = opt.proposals.compactMap { id, p -> UInt32? in
+                guard let t = tracks[id], wantsCover(t, p) else { return nil }
+                return id
+            }
+            if !ids.isEmpty { out.append(CoverTarget(releaseID: opt.id, releaseGroupID: opt.releaseGroupID, trackIDs: ids)) }
+        }
+        return out
+    }
+
+    private func apply(edits: [UInt32: TrackEdit], covers: [CoverTarget]) {
+        guard !covers.isEmpty else {
+            model.applyEdits(edits)
+            dismiss()
+            return
+        }
+        job.cancel()
+        coverProgress = (0, covers.count)
+        Task {
+            var found: [UInt32: Data] = [:]
+            var albums = 0
+            var done = 0
+            await withTaskGroup(of: (CoverTarget, Data?).self) { group in
+                var it = covers.makeIterator()
+                for _ in 0..<4 {
+                    guard let c = it.next() else { break }
+                    group.addTask { (c, await AutoTagSheet.fetchCover(c)) }
+                }
+                while let pair = await group.next() {
+                    done += 1
+                    coverProgress = (done, covers.count)
+                    if let raw = pair.1, let data = ArtworkPixels.normalized(raw) {
+                        albums += 1
+                        for id in pair.0.trackIDs { found[id] = data }
+                    }
+                    if let c = it.next() {
+                        group.addTask { (c, await AutoTagSheet.fetchCover(c)) }
+                    }
+                }
+            }
+            model.applyEdits(edits)
+            model.applyArtwork(found)
+            if albums < covers.count {
+                model.notice = LF("at.covers.result", albums, covers.count)
+            }
+            coverProgress = nil
+            dismiss()
+        }
+    }
+
+    /// Front cover from the Cover Art Archive: this release first, then any release of the album.
+    nonisolated static func fetchCover(_ c: CoverTarget) async -> Data? {
+        var urls = ["https://coverartarchive.org/release/\(c.releaseID)/front-500"]
+        if let rg = c.releaseGroupID { urls.append("https://coverartarchive.org/release-group/\(rg)/front-500") }
+        for u in urls {
+            guard let url = URL(string: u) else { continue }
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 30
+            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  ArtworkCache.thumbnail(data: data, pixels: 32) != nil else { continue }
+            return data
+        }
+        return nil
     }
 
     private func computeEdits() -> [UInt32: TrackEdit] {
@@ -344,6 +451,7 @@ private struct GroupCard: View {
     let tracks: [UInt32: Track]
     let keepFilled: Bool
     let replaceGenre: Bool
+    let wantsCover: (Track, TagProposal) -> Bool
 
     @State private var expanded = false
 
@@ -564,8 +672,10 @@ private struct GroupCard: View {
         var titleChanges = 0
         var numberChanges = 0
         var first: (Track, TrackEdit)?
+        var coverCount = 0
         for id in group.itemIDs {
             guard let t = tracks[id], let p = option.proposals[id] else { continue }
+            if wantsCover(t, p) { coverCount += 1 }
             let e = AutoTagSheet.edit(for: t, proposal: p, keepFilled: keepFilled, replaceGenre: replaceGenre)
             if e.title != nil { titleChanges += 1 }
             if e.trackNumber != nil || e.trackCount != nil { numberChanges += 1 }
@@ -589,6 +699,9 @@ private struct GroupCard: View {
             } else {
                 lines.append(Line(label: L("at.numbers"), old: "", new: LF("at.count", numberChanges)))
             }
+        }
+        if coverCount > 0 {
+            lines.append(Line(label: L("at.cover"), old: "", new: single ? L("at.cover.add") : LF("at.count", coverCount)))
         }
         return lines
     }

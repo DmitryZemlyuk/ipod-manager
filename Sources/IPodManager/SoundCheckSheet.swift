@@ -117,6 +117,8 @@ struct SoundCheckSheet: View {
     @AppStorage(Prefs.scTarget) private var target = 89.0
     @AppStorage(Prefs.scAlbumMode) private var albumMode = true
     @AppStorage(Prefs.scPreventClipping) private var preventClipping = true
+    /// false = Sound Check only, true = change MP3 files (mp3gain style).
+    @AppStorage(Prefs.scChangeFiles) private var changeFiles = false
 
     private var liveTracks: [Track] {
         model.tracks.filter { !model.pendingDeletes.contains($0.uniqueID) }.map { model.effective($0) }
@@ -140,6 +142,24 @@ struct SoundCheckSheet: View {
         }
     }
 
+    /// What will be done for one analyzed song.
+    struct Plan {
+        var gain: Double          // wanted correction, dB
+        var steps: Int?           // 1.5 dB steps written into the file (MP3 in file mode)
+        var fileGain: Double { Double(steps ?? 0) * MP3Gain.stepDB }
+        var residual: Double { gain - fileGain }
+    }
+
+    private func plan(_ r: GainRow) -> Plan {
+        let g = job.gain(for: r, target: target, albumMode: albumMode, preventClipping: preventClipping)
+        guard changeFiles, r.format == "MP3" else { return Plan(gain: g, steps: nil) }
+        var steps = Int((g / MP3Gain.stepDB).rounded())
+        if preventClipping, r.peak > 0 {
+            while steps > 0, Double(r.peak) * pow(10, Double(steps) * MP3Gain.stepDB / 20) > 1.0 { steps -= 1 }
+        }
+        return Plan(gain: g, steps: steps)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
@@ -159,25 +179,13 @@ struct SoundCheckSheet: View {
                 .disabled(job.running)
             }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(L("sc.mode.soundcheck")).fontWeight(.semibold)
-                            Text(L("sc.mode.soundcheck.text")).font(.callout).foregroundStyle(.secondary)
-                        }
-                    }
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "circle").foregroundStyle(.tertiary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(L("sc.mode.files")).fontWeight(.semibold).foregroundStyle(.secondary)
-                            Text(L("sc.mode.files.text")).font(.callout).foregroundStyle(.tertiary)
-                        }
-                    }
+            HStack(alignment: .top, spacing: 12) {
+                modeCard(selected: !changeFiles, title: L("sc.mode.soundcheck"), text: L("sc.mode.soundcheck.text")) {
+                    changeFiles = false
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
+                modeCard(selected: changeFiles, title: L("sc.mode.files"), text: L("sc.mode.files.text")) {
+                    changeFiles = true
+                }
             }
 
             HStack(spacing: 18) {
@@ -195,7 +203,7 @@ struct SoundCheckSheet: View {
             .onChange(of: albumMode) { _, _ in job.resetCache() }
 
             resultsTable
-                .frame(minHeight: 260)
+                .frame(minHeight: 220)
 
             if job.running || job.finished {
                 VStack(alignment: .leading, spacing: 6) {
@@ -218,6 +226,9 @@ struct SoundCheckSheet: View {
                 } else {
                     Button(L("sc.analyze")) { job.start(items(for: scope)) }
                         .disabled(items(for: scope).isEmpty)
+                    Button(L("sc.undo")) { queueUndo() }
+                        .disabled(!items(for: scope).contains { $0.format == "MP3" })
+                        .help(L("sc.undo.help"))
                 }
                 Spacer()
                 Button(L("cancel"), role: .cancel) {
@@ -232,11 +243,40 @@ struct SoundCheckSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 820, height: 640)
+        .frame(width: 860, height: 680)
         .onAppear {
             if !selectedRowIDs.isEmpty, !items(for: .selected).isEmpty { scope = .selected }
         }
         .onDisappear { job.cancel() }
+    }
+
+    private func modeCard(selected: Bool, title: String, text: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).fontWeight(.semibold)
+                    Text(text)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Color.accentColor.opacity(0.08) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.15), lineWidth: selected ? 1.5 : 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(job.running)
     }
 
     private var resultsTable: some View {
@@ -251,21 +291,29 @@ struct SoundCheckSheet: View {
             }
             .width(80)
             TableColumn(L("sc.col.clip")) { (r: GainRow) in
-                let g = job.gain(for: r, target: target, albumMode: albumMode, preventClipping: preventClipping)
-                let clips = Double(r.peak) * pow(10, g / 20) > 1.0001
+                let clips = Double(r.peak) * pow(10, plan(r).gain / 20) > 1.0001
                 Text(clips ? L("yes") : "–")
                     .foregroundStyle(clips ? Color.red : Color.secondary)
                     .fontWeight(clips ? .semibold : .regular)
             }
             .width(70)
             TableColumn(L("sc.col.gain")) { (r: GainRow) in
-                let g = job.gain(for: r, target: target, albumMode: albumMode, preventClipping: preventClipping)
-                Text(formatGain(g))
+                let p = plan(r)
+                Text(formatGain(p.gain))
                     .monospacedDigit()
                     .fontWeight(.semibold)
-                    .foregroundStyle(g > 0.05 ? Color.green : Color.accentColor)
+                    .foregroundStyle(p.gain > 0.05 ? Color.green : Color.accentColor)
             }
             .width(80)
+            TableColumn(L("sc.col.how")) { (r: GainRow) in
+                let p = plan(r)
+                if p.steps != nil {
+                    Text(LF("sc.how.file", formatGain(p.fileGain))).font(.caption)
+                } else {
+                    Text("Sound Check").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .width(120)
         }
         .overlay {
             if job.rows.isEmpty && !job.running {
@@ -278,12 +326,28 @@ struct SoundCheckSheet: View {
     }
 
     private func apply() {
-        var values: [UInt32: UInt32] = [:]
+        var soundCheck: [UInt32: UInt32] = [:]
+        var files: [UInt32: FileGainRequest] = [:]
         for r in job.rows {
-            let g = job.gain(for: r, target: target, albumMode: albumMode, preventClipping: preventClipping)
-            values[r.id] = SoundCheck.value(forGain: g)
+            let p = plan(r)
+            if let steps = p.steps {
+                files[r.id] = FileGainRequest(steps: steps,
+                                              fullSoundCheck: SoundCheck.value(forGain: p.gain),
+                                              residualSoundCheck: SoundCheck.value(forGain: p.residual))
+            } else {
+                soundCheck[r.id] = SoundCheck.value(forGain: p.gain)
+            }
         }
-        model.applySoundCheck(values)
+        model.applySoundCheck(soundCheck)
+        model.applyFileGain(files)
+        dismiss()
+    }
+
+    private func queueUndo() {
+        let ids = items(for: scope).filter { $0.format == "MP3" }.map { $0.id }
+        model.queueFileUndo(ids)
+        model.notice = LF("sc.undo.queued", ids.count)
+        job.cancel()
         dismiss()
     }
 }
