@@ -339,6 +339,23 @@ public enum ArtworkPixels {
         return Data(pack565(rgba: rgba))
     }
 
+    /// Re-encodes a cover as a JPEG of at most `maxPixels` on the long side, so queued covers stay small.
+    /// Returns nil when the data is not a readable image.
+    public static func normalized(_ data: Data, maxPixels: Int = 600) -> Data? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
+    }
+
     static func pack565(rgba: [UInt8]) -> [UInt8] {
         var out = [UInt8](repeating: 0, count: rgba.count / 2)
         var o = 0

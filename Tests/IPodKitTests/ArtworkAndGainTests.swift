@@ -168,6 +168,42 @@ final class ArtworkAndGainTests: XCTestCase {
         XCTAssertEqual(fourth.tracks[0].hasArtworkFlag, 2)
     }
 
+    func testSharedImageSurvivesUntilLastUserIsGone() throws {
+        let device = try tempDevice()
+        let src = device.mountURL.appendingPathComponent("song.mp3")
+        try Data(frame(gains: [150, 150, 150, 150]) + frame(gains: [150, 150, 150, 150])).write(to: src)
+        let session = try IPodSession(device: device)
+        var c = CommitChanges()
+        c.adds = [NewTrack(sourceURL: src, meta: meta("A"), artwork: png(1, 1, 0)), NewTrack(sourceURL: src, meta: meta("B"))]
+        _ = try session.commit(c) { _ in }
+
+        // Make B point at A's image, the way iTunes shares one item per album.
+        var tracks = session.tracks
+        let link = tracks[0].mhiiLink
+        tracks[1].setArtwork(imageID: link, sourceSize: 1)
+        var report = CommitReport()
+
+        // A is deleted, B still uses the image.
+        var remaining = [tracks[1]]
+        session.applyArtwork(tracks: &remaining, changes: [:], removed: [tracks[0]], report: &report)
+        XCTAssertEqual(session.artworkDB?.hasImage(imageID: link, songID: 0), true)
+
+        // B gets a new cover: now nobody uses the old item.
+        session.applyArtwork(tracks: &remaining, changes: [remaining[0].uniqueID: .set(png(0, 1, 1))], removed: [], report: &report)
+        XCTAssertEqual(session.artworkDB?.hasImage(imageID: link, songID: 0), false)
+        XCTAssertEqual(session.artworkDB?.imageCount, 1)
+        XCTAssertNotEqual(remaining[0].mhiiLink, link)
+    }
+
+    func testNormalizedCover() throws {
+        let big = png(0.2, 0.4, 0.6, width: 1400, height: 1400)
+        let small = try XCTUnwrap(ArtworkPixels.normalized(big))
+        let src = try XCTUnwrap(CGImageSourceCreateWithData(small as CFData, nil))
+        let img = try XCTUnwrap(CGImageSourceCreateImageAtIndex(src, 0, nil))
+        XCTAssertEqual(img.width, 600)
+        XCTAssertNil(ArtworkPixels.normalized(Data([9, 9, 9])))
+    }
+
     // MARK: MP3 gain
 
     func testBitFieldAccess() {

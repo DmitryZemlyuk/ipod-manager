@@ -93,7 +93,7 @@ struct AutoTagSheet: View {
     @State private var filter: Filter = .all
     @State private var coverProgress: (done: Int, total: Int)?
 
-    private var coversPossible: Bool { addCovers && (model.session?.artworkSupported ?? false) }
+    private var coversPossible: Bool { addCovers && (model.artworkSupported) }
 
     /// Whether a cover should be fetched for this song (given the found tags).
     private func wantsCover(_ t: Track, _ p: TagProposal) -> Bool {
@@ -275,7 +275,7 @@ struct AutoTagSheet: View {
                 Toggle(L("at.replacecovers"), isOn: $replaceCovers)
                     .disabled(!addCovers)
             }
-            .disabled(!(model.session?.artworkSupported ?? false))
+            .disabled(!(model.artworkSupported))
         }
         .disabled(coverProgress != nil)
     }
@@ -360,7 +360,7 @@ struct AutoTagSheet: View {
                 while let pair = await group.next() {
                     done += 1
                     coverProgress = (done, covers.count)
-                    if let data = pair.1 {
+                    if let raw = pair.1, let data = ArtworkPixels.normalized(raw) {
                         albums += 1
                         for id in pair.0.trackIDs { found[id] = data }
                     }

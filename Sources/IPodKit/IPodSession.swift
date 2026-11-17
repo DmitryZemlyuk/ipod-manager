@@ -284,14 +284,27 @@ public final class IPodSession: @unchecked Sendable {
         var written = 0, failed = 0
         do {
             try fm.createDirectory(at: device.artworkURL, withIntermediateDirectories: true)
-            for t in removed { adb.removeImage(imageID: t.mhiiLink, songID: t.dbid) }
+            // iTunes lets several songs of an album share one image item, so an item
+            // only goes away when its last user does.
+            var users: [UInt32: Int] = [:]
+            for t in working where t.mhiiLink != 0 { users[t.mhiiLink, default: 0] += 1 }
+            func release(_ t: Track, counted: Bool) {
+                let link = t.mhiiLink
+                if link != 0 {
+                    if counted { users[link, default: 1] -= 1 }
+                    if users[link, default: 0] <= 0 { adb.removeImage(imageID: link, songID: 0) }
+                } else {
+                    adb.removeImage(imageID: 0, songID: t.dbid)
+                }
+            }
+            for t in removed { release(t, counted: false) }
             var rendered: [Data: [ArtworkDB.ThumbRef]] = [:]
             var unreadable = Set<Data>()
             for i in working.indices {
                 guard let change = changes[working[i].uniqueID] else { continue }
                 switch change {
                 case .remove:
-                    adb.removeImage(imageID: working[i].mhiiLink, songID: working[i].dbid)
+                    release(working[i], counted: true)
                     working[i].clearArtwork()
                 case .set(let data):
                     if unreadable.contains(data) { failed += 1; continue }
@@ -312,7 +325,7 @@ public final class IPodSession: @unchecked Sendable {
                     }
                     guard let refs else { failed += 1; continue }
                     if working[i].dbid == 0 { working[i].dbid = UInt64.random(in: 1...UInt64.max) }
-                    adb.removeImage(imageID: working[i].mhiiLink, songID: working[i].dbid)
+                    release(working[i], counted: true)
                     let id = adb.addImage(songID: working[i].dbid, sourceSize: UInt32(clamping: data.count), thumbs: refs)
                     working[i].setArtwork(imageID: id, sourceSize: UInt32(clamping: data.count))
                     written += 1

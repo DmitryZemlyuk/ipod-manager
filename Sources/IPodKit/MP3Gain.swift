@@ -16,7 +16,8 @@ public enum MP3GainError: Error, LocalizedError {
 /// granule is shifted by whole steps (1 step = 1.5 dB). Undo data goes into an APEv2 tag
 /// using mp3gain's own keys, so mp3gain/MP3Gain Express can read and undo it as well.
 public enum MP3Gain {
-    public static let stepDB = 1.5
+    /// One step multiplies the amplitude by 2^(1/4).
+    public static let stepDB = 1.505149978
 
     struct Frame {
         let offset: Int

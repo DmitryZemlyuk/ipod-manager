@@ -11,15 +11,16 @@ A native macOS app for managing music on an iPod Classic 5th generation (iPod Vi
 - **Export** from the iPod back to the Mac with real file names and an Artist / Album folder structure.
 - **Tags from the internet** in batches: songs are matched album by album against MusicBrainz (few requests, consistent album tags), the rest one by one; untagged files can be recognized by sound via AcoustID (bundled Chromaprint `fpcalc`, needs a free AcoustID API key in Settings). When an album has several editions you pick one; nothing is written until you apply and write to the iPod.
 - Settings (⌘,): interface language, default volume leveling options, AcoustID key.
-- Cover thumbnails in both lists, read from the files' tags.
+- **Cover art on the iPod** (ArtworkDB + `.ithmb`, 100×100 and 200×200 RGB565 for the iPod Video): covers of new songs come from the files, you can set or remove covers in the tag editor, add the covers embedded in files already on the iPod, and download covers from the Cover Art Archive together with the tags. Existing artwork written by iTunes is preserved; the previous database is kept as `ArtworkDB.bak`.
+- **MP3Gain-style volume change**: optionally the leveling is written into the MP3 files themselves (global gain shifted in 1.5 dB steps, no re-encoding), with mp3gain-compatible undo data in an APEv2 tag and a one-click restore. AAC and other formats keep using Sound Check.
+- Cover thumbnails in both lists.
 - Supported formats: MP3, AAC, Apple Lossless, WAV, AIFF. FLAC and other formats the iPod can't play are skipped.
 - Localized in English, Ukrainian and Russian.
 
 ## Planned
 
-- Cover art on the iPod itself (ArtworkDB).
-- MP3Gain-style lossless volume change in the files.
-- Writing found covers (Cover Art Archive) to the iPod together with ArtworkDB support.
+- Writing tags and covers into the audio files themselves (today they go to the iPod databases).
+- Lossless volume change for AAC.
 
 ## Install
 

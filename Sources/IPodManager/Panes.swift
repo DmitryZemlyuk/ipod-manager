@@ -149,6 +149,12 @@ struct IPodPane: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(systemImage: "ipod", title: "iPod", subtitle: subtitle) {
+                if let scan = model.coverScan {
+                    ProgressView().controlSize(.small)
+                    Text(LF("covers.scanning", scan.done, scan.total))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if model.hasPending {
                     Text(pendingSummary)
                         .font(.caption)

@@ -96,7 +96,7 @@ struct TagEditorSheet: View {
         }
     }
 
-    private var artworkSupported: Bool { model.session?.artworkSupported ?? false }
+    private var artworkSupported: Bool { model.artworkSupported }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

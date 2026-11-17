@@ -79,6 +79,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var artworkDB: ArtworkDB?
     /// Changes whenever covers on the iPod may have changed (busts the thumbnail cache).
     @Published private(set) var artVersion = 0
+    @Published private(set) var artworkSupported = false
     @Published private(set) var lastReport = CommitReport()
     @Published private(set) var coverScan: (done: Int, total: Int)?
 
@@ -138,6 +139,7 @@ final class AppModel: ObservableObject {
         device = d
         session = nil
         artworkDB = nil
+        artworkSupported = false
         loadError = nil
         tracks = []
         clearPending()
@@ -146,11 +148,13 @@ final class AppModel: ObservableObject {
         Task.detached(priority: .userInitiated) {
             do {
                 let s = try IPodSession(device: d)
+                let supported = s.artworkSupported
                 await MainActor.run {
                     guard self.device == d else { return }
                     self.session = s
                     self.tracks = s.tracks
                     self.artworkDB = s.artworkDB
+                    self.artworkSupported = supported
                     self.artVersion += 1
                     self.loading = false
                     self.refreshOnIPodFlags()
@@ -345,6 +349,11 @@ final class AppModel: ObservableObject {
     }
 
     func setArtwork(_ change: ArtworkChange, rowIDs: Set<String>) {
+        var change = change
+        if case .set(let d) = change {
+            guard let n = ArtworkPixels.normalized(d) else { return }
+            change = .set(n)
+        }
         var map = pendingArtwork
         for id in trackIDs(for: rowIDs) { map[id] = change }
         pendingArtwork = map
@@ -366,6 +375,10 @@ final class AppModel: ObservableObject {
     /// Queues the covers embedded in the files for every song that has none on the iPod.
     func addCoversFromFiles() {
         guard let device, coverScan == nil else { return }
+        guard artworkSupported else {
+            notice = L("art.unsupported")
+            return
+        }
         let targets = tracks.filter { !pendingDeletes.contains($0.uniqueID) && !hasArtwork($0) }
             .map { (id: $0.uniqueID, url: device.fileURL(for: $0)) }
         guard !targets.isEmpty else {
@@ -375,8 +388,14 @@ final class AppModel: ObservableObject {
         coverScan = (0, targets.count)
         Task {
             var found: [UInt32: Data] = [:]
+            var shared: [Data: Data] = [:]      // identical covers share one buffer
             for (n, t) in targets.enumerated() {
-                if let d = await AudioMetaReader.artworkData(url: t.url) { found[t.id] = d }
+                if let raw = await AudioMetaReader.artworkData(url: t.url),
+                   let d = await Task.detached(operation: { ArtworkPixels.normalized(raw) }).value {
+                    let one = shared[d] ?? d
+                    shared[d] = one
+                    found[t.id] = one
+                }
                 if n % 20 == 0 { self.coverScan = (n, targets.count) }
                 if self.device != device { break }
             }
@@ -617,7 +636,7 @@ final class AppModel: ObservableObject {
                 switch a.artwork {
                 case .set(let d): art = d
                 case .remove: art = nil
-                case nil: art = await AudioMetaReader.artworkData(url: a.url)
+                case nil: art = await AudioMetaReader.artworkData(url: a.url).flatMap { ArtworkPixels.normalized($0) }
                 }
                 adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art))
             }
@@ -632,9 +651,11 @@ final class AppModel: ObservableObject {
                     }
                 }
                 let adb = s.artworkDB
+                let supported = s.artworkSupported
                 await MainActor.run {
                     self.tracks = s.tracks
                     self.artworkDB = adb
+                    self.artworkSupported = supported
                     self.artVersion += 1
                     self.lastReport = report
                     self.clearPending()
