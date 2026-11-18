@@ -238,6 +238,16 @@ S = {
 "report.tags.failed": ("Files whose tags could not be written (the iPod database is updated anyway): %ld", "Файлов, в которые не удалось записать теги (база iPod всё равно обновлена): %ld", "Файлів, у які не вдалося записати теги (базу iPod усе одно оновлено): %ld"),
 "report.art.freed": ("Space freed from old covers: %@", "Освобождено от старых обложек: %@", "Звільнено від старих обкладинок: %@"),
 
+"settings.cache": ("Cache folder", "Папка для кэша", "Тека для кешу"),
+"settings.cache.default": ("standard (~/Library/Caches)", "стандартная (~/Library/Caches)", "стандартна (~/Library/Caches)"),
+"settings.cache.choose": ("Choose folder…", "Выбрать папку…", "Вибрати теку…"),
+"settings.cache.reset": ("Use the standard one", "Вернуть стандартную", "Повернути стандартну"),
+"settings.cache.size": ("Takes up", "Занимает", "Займає"),
+"settings.cache.clear": ("Clear", "Очистить", "Очистити"),
+"settings.cache.text": ("Files the app keeps on the Mac only to work faster: answers of the tag search (for two weeks) and downloaded cover previews. Inside the folder you choose the app makes its own \"iPod Manager Cache\" folder and only ever deletes that. Nothing of this is written to the iPod.", "Файлы, которые апка держит на Mac только для скорости: ответы поиска тегов (две недели) и загруженные превью обложек. В выбранной папке апка создаёт свою подпапку «iPod Manager Cache» и удаляет только её содержимое. На iPod это не пишется.", "Файли, які апка тримає на Mac лише для швидкості: відповіді пошуку тегів (два тижні) та завантажені превʼю обкладинок. У вибраній теці апка створює свою підтеку «iPod Manager Cache» і видаляє лише її вміст. На iPod це не записується."),
+"settings.cache.onipod": ("Choose a folder on the Mac, not on the iPod.", "Выберите папку на Mac, а не на iPod.", "Виберіть теку на Mac, а не на iPod."),
+"settings.cache.readonly": ("The app can't write to this folder.", "Апка не может писать в эту папку.", "Апка не може писати в цю теку."),
+
 "settings.language": ("Language", "Язык интерфейса", "Мова інтерфейсу"),
 "settings.language.system": ("Same as system", "Как в системе", "Як у системі"),
 "settings.language.restart": ("The new language applies after a restart", "Новый язык применится после перезапуска", "Нова мова застосується після перезапуску"),

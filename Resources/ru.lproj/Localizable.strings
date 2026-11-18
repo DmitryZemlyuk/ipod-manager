@@ -189,6 +189,15 @@
 "settings.acoustid" = "Ключ AcoustID";
 "settings.acoustid.get" = "Получить бесплатный ключ на acoustid.org";
 "settings.acoustid.text" = "Нужен только для распознавания песен по звуку, когда тегов нет совсем. Поиск по тегам и названиям работает без ключа.";
+"settings.cache" = "Папка для кэша";
+"settings.cache.choose" = "Выбрать папку…";
+"settings.cache.clear" = "Очистить";
+"settings.cache.default" = "стандартная (~/Library/Caches)";
+"settings.cache.onipod" = "Выберите папку на Mac, а не на iPod.";
+"settings.cache.readonly" = "Апка не может писать в эту папку.";
+"settings.cache.reset" = "Вернуть стандартную";
+"settings.cache.size" = "Занимает";
+"settings.cache.text" = "Файлы, которые апка держит на Mac только для скорости: ответы поиска тегов (две недели) и загруженные превью обложек. В выбранной папке апка создаёт свою подпапку «iPod Manager Cache» и удаляет только её содержимое. На iPod это не пишется.";
 "settings.filetags" = "Записывать теги и обложки также в сами файлы";
 "settings.filetags.text" = "MP3- и M4A-файлы на iPod получают те же теги и обложку, что показывает плеер, поэтому они сохраняются при экспорте на Mac. Сам звук не меняется. Файлы на Mac не трогаются.";
 "settings.language" = "Язык интерфейса";

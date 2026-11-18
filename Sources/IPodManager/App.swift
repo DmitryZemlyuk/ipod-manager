@@ -9,6 +9,7 @@ struct IPodManagerApp: App {
     init() {
         // Freeze the language the app started with before Settings can change it.
         _ = AppLanguage.atLaunch
+        AppCache.installWebCache()
     }
 
     var body: some Scene {

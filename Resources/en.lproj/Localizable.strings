@@ -189,6 +189,15 @@
 "settings.acoustid" = "AcoustID key";
 "settings.acoustid.get" = "Get a free key on acoustid.org";
 "settings.acoustid.text" = "Only needed to recognize songs by sound when they have no tags at all. Search by tags and titles works without it.";
+"settings.cache" = "Cache folder";
+"settings.cache.choose" = "Choose folder…";
+"settings.cache.clear" = "Clear";
+"settings.cache.default" = "standard (~/Library/Caches)";
+"settings.cache.onipod" = "Choose a folder on the Mac, not on the iPod.";
+"settings.cache.readonly" = "The app can't write to this folder.";
+"settings.cache.reset" = "Use the standard one";
+"settings.cache.size" = "Takes up";
+"settings.cache.text" = "Files the app keeps on the Mac only to work faster: answers of the tag search (for two weeks) and downloaded cover previews. Inside the folder you choose the app makes its own \"iPod Manager Cache\" folder and only ever deletes that. Nothing of this is written to the iPod.";
 "settings.filetags" = "Also write tags and covers into the files";
 "settings.filetags.text" = "MP3 and M4A files on the iPod get the same tags and cover as the iPod shows, so they survive an export to the Mac. The audio itself is never changed. Files on the Mac are not touched.";
 "settings.language" = "Language";
