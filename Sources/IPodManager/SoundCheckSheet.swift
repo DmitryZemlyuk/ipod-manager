@@ -187,6 +187,8 @@ struct SoundCheckSheet: View {
                     changeFiles = true
                 }
             }
+            // Both cards take the height of the taller one.
+            .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 18) {
                 HStack(spacing: 6) {
@@ -266,7 +268,7 @@ struct SoundCheckSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(selected ? Color.accentColor.opacity(0.08) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
@@ -276,6 +278,8 @@ struct SoundCheckSheet: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        // The keyboard focus ring made the unselected card look selected too.
+        .focusEffectDisabled()
         .disabled(job.running)
     }
 
