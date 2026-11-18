@@ -29,7 +29,10 @@ final class AutoTagJob: ObservableObject {
         generation += 1
         let gen = generation
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-        let tagger = AutoTagger(client: MusicBrainzClient(appVersion: version), acoustIDKey: acoustIDKey, fpcalc: fpcalc)
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("io.github.dmitryzemlyuk.ipodmanager/musicbrainz", isDirectory: true)
+        let tagger = AutoTagger(client: MusicBrainzClient(appVersion: version, cacheDirectory: cache),
+                                acoustIDKey: acoustIDKey, fpcalc: fpcalc)
         task = Task {
             let result = await tagger.run(items: items, progress: { d, t in
                 Task { @MainActor in

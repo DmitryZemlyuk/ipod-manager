@@ -40,6 +40,7 @@ struct CommitSheet: View {
             switch phase {
             case .copying: return L("commit.copying")
             case .changingFiles: return L("commit.files")
+            case .writingTags: return L("commit.tags")
             case .writingArtwork: return L("commit.artwork")
             case .writingDatabase: return L("commit.writing")
             case .removingFiles: return L("commit.removing")
@@ -64,7 +65,7 @@ struct CommitSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-        case .running(.changingFiles(let done, let total)):
+        case .running(.changingFiles(let done, let total)), .running(.writingTags(let done, let total)):
             VStack(spacing: 6) {
                 ProgressView(value: Double(done), total: Double(max(total, 1)))
                 HStack {
@@ -115,6 +116,9 @@ struct CommitSheet: View {
         if r.filesChanged > 0 { out.append(LF("report.files.ok", r.filesChanged)) }
         if r.filesRestored > 0 { out.append(LF("report.files.restored", r.filesRestored)) }
         if r.filesFailed > 0 { out.append(LF("report.files.failed", r.filesFailed)) }
+        if r.tagsWritten > 0 { out.append(LF("report.tags.ok", r.tagsWritten)) }
+        if r.tagsFailed > 0 { out.append(LF("report.tags.failed", r.tagsFailed)) }
+        if r.artworkBytesFreed > 0 { out.append(LF("report.art.freed", formatBytes(r.artworkBytesFreed))) }
         return out
     }
 

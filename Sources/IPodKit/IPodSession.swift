@@ -23,11 +23,14 @@ public struct NewTrack: Sendable {
     public var meta: AudioMeta
     /// Cover image file data (JPEG/PNG), if any.
     public var artwork: Data?
+    /// Tag changes to write into the copy on the iPod (the source file is never modified).
+    public var fileTags: TagWrite?
 
-    public init(sourceURL: URL, meta: AudioMeta, artwork: Data? = nil) {
+    public init(sourceURL: URL, meta: AudioMeta, artwork: Data? = nil, fileTags: TagWrite? = nil) {
         self.sourceURL = sourceURL
         self.meta = meta
         self.artwork = artwork
+        self.fileTags = fileTags
     }
 }
 
@@ -58,6 +61,8 @@ public struct CommitChanges: Sendable {
     public var artwork: [UInt32: ArtworkChange] = [:]
     public var fileGain: [UInt32: FileGainRequest] = [:]
     public var fileGainUndo: Set<UInt32> = []
+    /// Tag and cover changes to store inside the audio files of existing songs.
+    public var fileTags: [UInt32: TagWrite] = [:]
 
     public init() {}
 }
@@ -70,6 +75,10 @@ public struct CommitReport: Sendable, Equatable {
     public var filesChanged = 0
     public var filesRestored = 0
     public var filesFailed = 0
+    public var tagsWritten = 0
+    public var tagsFailed = 0
+    /// Space reclaimed from the cover files.
+    public var artworkBytesFreed: Int64 = 0
 
     public init() {}
 }
@@ -77,6 +86,7 @@ public struct CommitReport: Sendable, Equatable {
 public enum CommitPhase: Equatable, Sendable {
     case copying(done: Int, total: Int, name: String)
     case changingFiles(done: Int, total: Int)
+    case writingTags(done: Int, total: Int)
     case writingArtwork
     case writingDatabase
     case removingFiles
@@ -149,6 +159,7 @@ public final class IPodSession: @unchecked Sendable {
 
         var created: [URL] = []
         var artwork = changes.artwork
+        var tagWrites = changes.fileTags
         do {
             // 4. Copy new files.
             var tracks = newDB.tracks
@@ -177,6 +188,7 @@ public final class IPodSession: @unchecked Sendable {
                     tracks.append(Track.make(meta: add.meta, uniqueID: nextID, relativePath: rel,
                                              fileSize: UInt32(clamping: size)))
                     if let art = add.artwork { artwork[nextID] = .set(art) }
+                    if let tags = add.fileTags, !tags.isEmpty { tagWrites[nextID] = tags }
                     nextID += 1
                 }
                 progress(.copying(done: adds.count, total: adds.count, name: ""))
@@ -219,6 +231,29 @@ public final class IPodSession: @unchecked Sendable {
                         done += 1
                         progress(.changingFiles(done: done, total: gainTotal))
                     }
+                }
+            }
+
+            // 5b. Tags and covers inside the audio files.
+            if !tagWrites.isEmpty {
+                var done = 0
+                progress(.writingTags(done: 0, total: tagWrites.count))
+                for i in tracks.indices {
+                    guard let w = tagWrites[tracks[i].uniqueID] else { continue }
+                    do {
+                        switch try FileTags.write(w, to: device.fileURL(for: tracks[i])) {
+                        case .written(let size):
+                            tracks[i].size = UInt32(clamping: size)
+                            tracks[i].timeModified = MacTime.now()
+                            report.tagsWritten += 1
+                        case .unchanged, .notApplicable:
+                            break
+                        }
+                    } catch {
+                        report.tagsFailed += 1
+                    }
+                    done += 1
+                    progress(.writingTags(done: done, total: tagWrites.count))
                 }
             }
 
@@ -332,7 +367,16 @@ public final class IPodSession: @unchecked Sendable {
                 }
             }
             adb.ensureFiles(ArtworkFormat.video)
-            try writeArtworkDB(adb)
+            // Reclaim the space of covers nobody uses any more, once it is worth it.
+            var swaps: [(tmp: URL, final: URL)] = []
+            var freed: Int64 = 0
+            if let plan = try? planCompaction(adb, force: false) {
+                adb = plan.db
+                swaps = plan.swaps
+                freed = plan.freed
+            }
+            try writeArtworkDB(adb, swaps: swaps)
+            report.artworkBytesFreed += freed
         } catch {
             // Cover art is optional: keep the songs, report the problem.
             report.artworkFailed += sets
@@ -370,22 +414,145 @@ public final class IPodSession: @unchecked Sendable {
                                   fileName: ":\(prefix)\(index).ithmb")
     }
 
-    func writeArtworkDB(_ adb: ArtworkDB) throws {
+    func writeArtworkDB(_ adb: ArtworkDB, swaps: [(tmp: URL, final: URL)] = []) throws {
         let fm = FileManager.default
-        let bytes = adb.serialize()
-        let check = try ArtworkDB.parse(bytes)
-        guard check.imageCount == adb.imageCount else { throw ArtworkDBError.bad("verification failed") }
         let target = device.artworkDBURL
         let tmp = device.artworkURL.appendingPathComponent("ArtworkDB.ipm-tmp")
         let bak = device.artworkURL.appendingPathComponent("ArtworkDB.bak")
-        try? fm.removeItem(at: tmp)
-        try Data(bytes).write(to: tmp)
-        if fm.fileExists(atPath: target.path) {
-            try? fm.removeItem(at: bak)
-            try fm.copyItem(at: target, to: bak)
-            try fm.removeItem(at: target)
+        do {
+            let bytes = adb.serialize()
+            let check = try ArtworkDB.parse(bytes)
+            guard check.imageCount == adb.imageCount else { throw ArtworkDBError.bad("verification failed") }
+            try? fm.removeItem(at: tmp)
+            try Data(bytes).write(to: tmp)
+        } catch {
+            for s in swaps { try? fm.removeItem(at: s.tmp) }
+            throw error
         }
-        try fm.moveItem(at: tmp, to: target)
+        try? fm.removeItem(at: bak)
+        if swaps.isEmpty {
+            if fm.fileExists(atPath: target.path) { try? fm.copyItem(at: target, to: bak) }
+        } else {
+            // The old database would point at the old pixel layout, so no backup is kept here.
+            // New pixel files and the new database go live back to back.
+            for s in swaps {
+                if rename(s.tmp.path, s.final.path) != 0 {
+                    for rest in swaps { try? fm.removeItem(at: rest.tmp) }
+                    try? fm.removeItem(at: tmp)
+                    throw CocoaError(.fileWriteUnknown)
+                }
+            }
+        }
+        if rename(tmp.path, target.path) != 0 {
+            try? fm.removeItem(at: tmp)
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    // MARK: Compacting cover files
+
+    struct CompactionPlan {
+        var db: ArtworkDB
+        var swaps: [(tmp: URL, final: URL)]
+        var freed: Int64
+    }
+
+    struct PixelFile {
+        var name: String            // as stored in the database, e.g. ":F1028_1.ithmb"
+        var url: URL
+        var size: Int
+        var blocks: [(offset: Int, size: Int)]
+        var live: Int { blocks.reduce(0) { $0 + $1.size } }
+        var waste: Int { size - live }
+    }
+
+    /// Pixel files with their used blocks. Files with anything unexpected in them are left out.
+    func pixelFiles(_ adb: ArtworkDB) -> [PixelFile] {
+        let fm = FileManager.default
+        var byName: [String: [Int: Int]] = [:]
+        var bad = Set<String>()
+        for r in adb.allThumbRefs() {
+            if let s = byName[r.fileName]?[r.offset], s != r.size { bad.insert(r.fileName) }
+            byName[r.fileName, default: [:]][r.offset] = r.size
+        }
+        var out: [PixelFile] = []
+        for (name, map) in byName where !bad.contains(name) {
+            var plain = name
+            while plain.hasPrefix(":") { plain.removeFirst() }
+            guard !plain.isEmpty, !plain.contains(":"), !plain.contains("/"), plain.hasSuffix(".ithmb") else { continue }
+            let url = device.artworkURL.appendingPathComponent(plain)
+            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let size = (attrs[.size] as? NSNumber)?.intValue else { continue }
+            let blocks = map.map { (offset: $0.key, size: $0.value) }.sorted { $0.offset < $1.offset }
+            var ok = true
+            var end = 0
+            for b in blocks {
+                if b.size <= 0 || b.offset < end || b.offset + b.size > size { ok = false; break }
+                end = b.offset + b.size
+            }
+            if ok { out.append(PixelFile(name: name, url: url, size: size, blocks: blocks)) }
+        }
+        return out
+    }
+
+    /// Bytes in the cover files that no cover uses.
+    public func artworkWaste() -> Int64 {
+        guard let adb = artworkDB, artworkSupported else { return 0 }
+        return pixelFiles(adb).reduce(Int64(0)) { $0 + Int64(max($1.waste, 0)) }
+    }
+
+    /// Writes compacted copies of the pixel files next to the originals and returns the database
+    /// with remapped offsets. Nothing is live until `writeArtworkDB` swaps the files in.
+    func planCompaction(_ adb: ArtworkDB, force: Bool) throws -> CompactionPlan {
+        let fm = FileManager.default
+        var swaps: [(tmp: URL, final: URL)] = []
+        var map: [String: [Int: Int]] = [:]
+        var freed: Int64 = 0
+        do {
+            for file in pixelFiles(adb) {
+                let waste = file.waste
+                guard waste > 0 else { continue }
+                if !force, waste < 2 * 1024 * 1024 || waste * 10 < file.size { continue }
+                let tmp = file.url.appendingPathExtension("ipm-new")
+                try? fm.removeItem(at: tmp)
+                fm.createFile(atPath: tmp.path, contents: nil)
+                swaps.append((tmp, file.url))
+                let input = try FileHandle(forReadingFrom: file.url)
+                defer { try? input.close() }
+                let output = try FileHandle(forWritingTo: tmp)
+                defer { try? output.close() }
+                var position = 0
+                var offsets: [Int: Int] = [:]
+                for b in file.blocks {
+                    try input.seek(toOffset: UInt64(b.offset))
+                    guard let data = try input.read(upToCount: b.size), data.count == b.size else {
+                        throw ArtworkDBError.bad("short read in \(file.url.lastPathComponent)")
+                    }
+                    try output.write(contentsOf: data)
+                    offsets[b.offset] = position
+                    position += b.size
+                }
+                try output.synchronize()
+                map[file.name] = offsets
+                freed += Int64(waste)
+            }
+        } catch {
+            for s in swaps { try? fm.removeItem(at: s.tmp) }
+            throw error
+        }
+        var db = adb
+        db.remapOffsets(map)
+        return CompactionPlan(db: db, swaps: swaps, freed: freed)
+    }
+
+    /// Frees the space of unused covers right now. Returns the number of bytes reclaimed.
+    public func compactArtwork() throws -> Int64 {
+        guard let adb = artworkDB, artworkSupported else { return 0 }
+        let plan = try planCompaction(adb, force: true)
+        guard !plan.swaps.isEmpty else { return 0 }
+        try writeArtworkDB(plan.db, swaps: plan.swaps)
+        artworkDB = plan.db
+        return plan.freed
     }
 
     // MARK: iTunesDB

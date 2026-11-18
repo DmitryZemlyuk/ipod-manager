@@ -20,15 +20,16 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
+      - name: Install lame (real MP3 files for the tests)
+        continue-on-error: true
+        run: brew install lame >/dev/null 2>&1 || true
       - name: Unit tests
         run: swift test
       - name: Live tests
         if: github.event_name == 'workflow_dispatch'
         env:
           LIVE_TESTS: "1"
-        run: |
-          brew install lame >/dev/null 2>&1 || true
-          swift test --filter LiveTests 2>&1 | tail -150
+        run: swift test --filter LiveTests 2>&1 | tail -150
       - name: Fetch fpcalc (Chromaprint, for AcoustID)
         continue-on-error: true
         env:

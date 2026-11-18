@@ -81,7 +81,13 @@
 "commit.files" = "Changing the volume inside MP3 files";
 "commit.preparing" = "Preparing…";
 "commit.removing" = "Removing deleted songs";
+"commit.tags" = "Writing tags into the files";
 "commit.writing" = "Saving the iPod database";
+"compact.done" = "Freed %@.";
+"compact.menu" = "Free the space of old covers";
+"compact.nothing" = "There is nothing to free: every stored cover is in use.";
+"compact.pending" = "Write or discard the pending changes first.";
+"compact.running" = "Freeing space…";
 "covers.found" = "Covers found inside the files: %ld of %ld songs without a cover. Press \"Write to iPod\" to save them.";
 "covers.fromfiles" = "Add covers from the files";
 "covers.none" = "Every song on the iPod already has a cover.";
@@ -90,6 +96,7 @@
 "ctx.delete" = "Delete from iPod";
 "ctx.info" = "Info and tags…";
 "ctx.restore" = "Undo changes";
+"ctx.sync" = "Write tags into the files";
 "db" = "dB";
 "done" = "Done";
 "drop.noipod" = "Connect an iPod first";
@@ -141,11 +148,14 @@
 "pending.discard" = "Discard changes";
 "pending.edit" = "edited %ld";
 "report.art.failed" = "Covers that could not be saved: %ld";
+"report.art.freed" = "Space freed from old covers: %@";
 "report.art.ok" = "Covers saved: %ld";
 "report.art.unsupported" = "Covers were not saved: this iPod stores them in a format the app can't write.";
 "report.files.failed" = "Files that could not be changed (Sound Check is used for them instead): %ld";
 "report.files.ok" = "MP3 files changed: %ld";
 "report.files.restored" = "MP3 files restored to the original volume: %ld";
+"report.tags.failed" = "Files whose tags could not be written (the iPod database is updated anyway): %ld";
+"report.tags.ok" = "Files with updated tags: %ld";
 "save" = "Save";
 "sc.album" = "By album";
 "sc.analyze" = "Analyze";
@@ -179,6 +189,8 @@
 "settings.acoustid" = "AcoustID key";
 "settings.acoustid.get" = "Get a free key on acoustid.org";
 "settings.acoustid.text" = "Only needed to recognize songs by sound when they have no tags at all. Search by tags and titles works without it.";
+"settings.filetags" = "Also write tags and covers into the files";
+"settings.filetags.text" = "MP3 and M4A files on the iPod get the same tags and cover as the iPod shows, so they survive an export to the Mac. The audio itself is never changed. Files on the Mac are not touched.";
 "settings.language" = "Language";
 "settings.language.pending" = "Write or discard the iPod changes first";
 "settings.language.restart" = "The new language applies after a restart";
@@ -186,6 +198,8 @@
 "settings.online" = "Tags from the internet";
 "settings.optional" = "optional";
 "settings.restart" = "Restart";
+"sync.all" = "Copy tags from the iPod database into all files";
+"sync.queued" = "Queued songs: %ld. Their tags from the iPod database will be written into the files. Press \"Write to iPod\" to start.";
 "tag.album" = "Album";
 "tag.albumArtist" = "Album artist";
 "tag.artist" = "Artist";
@@ -198,7 +212,7 @@
 "tag.title" = "Title";
 "tag.track" = "Track";
 "tag.year" = "Year";
-"tags.footer" = "Tags and covers are written to the iPod databases";
+"tags.footer" = "Tags and covers are written when you press \"Write to iPod\"";
 "tags.subtitle.many" = "%ld songs selected – shared fields change for all of them";
 "tags.subtitle.one" = "Changes are saved when you write to the iPod";
 "tags.title" = "Info";

@@ -31,6 +31,10 @@ struct IPodManagerApp: App {
                     model.addCoversFromFiles()
                 }
                 .disabled(model.session == nil || model.coverScan != nil || model.commitState.isRunning)
+                Button(L("sync.all")) { model.queueTagSync(nil) }
+                    .disabled(model.session == nil || model.tracks.isEmpty || model.commitState.isRunning)
+                Button(model.compacting ? L("compact.running") : L("compact.menu")) { model.compactArtwork() }
+                    .disabled(model.session == nil || model.compacting || model.commitState.isRunning || !model.artworkSupported)
                 Divider()
                 Button(L("tool.eject")) { model.eject() }
                     .keyboardShortcut("e", modifiers: [.command])
