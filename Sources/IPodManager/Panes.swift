@@ -9,6 +9,7 @@ struct MacPane: View {
     @EnvironmentObject private var model: AppModel
     @Binding var selection: Set<String>
     let search: String
+    let onTool: (Set<String>, SheetKind) -> Void
     @State private var sortOrder = [KeyPathComparator(\LocalTrack.artist)]
 
     private var rows: [LocalTrack] {
@@ -108,6 +109,12 @@ struct MacPane: View {
         .contextMenu(forSelectionType: String.self) { ids in
             Button(L("mac.add")) { model.addFromMac(ids) }
                 .disabled(model.session == nil || ids.isEmpty)
+            Divider()
+            Button(L("ctx.autotag")) { onTool(ids, .autoTag) }
+                .disabled(model.session == nil || ids.isEmpty)
+            Button(L("mac.level")) { onTool(ids, .soundCheck) }
+                .disabled(model.session == nil || ids.isEmpty)
+            Divider()
             Button(L("mac.reveal")) {
                 let urls = model.macTracks.filter { ids.contains($0.id) }.map { $0.url }
                 NSWorkspace.shared.activateFileViewerSelecting(urls)

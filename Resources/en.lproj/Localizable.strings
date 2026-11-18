@@ -139,6 +139,7 @@
 "mac.choose" = "Choose";
 "mac.empty.text" = "Choose a folder with music, or drag files from Finder straight onto the iPod list.";
 "mac.empty.title" = "No music in this folder";
+"mac.level" = "Level volume…";
 "mac.onipod" = "Already on the iPod";
 "mac.reveal" = "Show in Finder";
 "mac.scanning" = "Scanning… %ld";

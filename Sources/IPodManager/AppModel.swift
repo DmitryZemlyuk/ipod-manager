@@ -668,6 +668,40 @@ final class AppModel: ObservableObject {
 
     // MARK: - Adding files
 
+    /// iPod rows for songs picked in the Mac list. Songs that are not on the iPod yet are queued first,
+    /// so the tag search and the volume tools can be started straight from the Mac list.
+    func rowsForMac(_ ids: Set<String>) async -> Set<String> {
+        guard session != nil else { return [] }
+        let picked = macTracks.filter { ids.contains($0.id) && $0.supported }
+        guard !picked.isEmpty else { return [] }
+        func lookup() -> (byPath: [String: String], byKey: [String: [String]]) {
+            var byPath: [String: String] = [:]
+            var byKey: [String: [String]] = [:]
+            for a in pendingAdds {
+                byPath[a.url.standardizedFileURL.path] = "n\(a.id.uuidString)"
+                byKey[AppModel.dupKey(a.meta.title, a.meta.artist), default: []].append("n\(a.id.uuidString)")
+            }
+            for raw in tracks where !pendingDeletes.contains(raw.uniqueID) {
+                let t = effective(raw)
+                byKey[AppModel.dupKey(t.title, t.artist), default: []].append("t\(t.uniqueID)")
+            }
+            return (byPath, byKey)
+        }
+        func rows(_ t: LocalTrack, _ maps: (byPath: [String: String], byKey: [String: [String]])) -> [String] {
+            if let r = maps.byPath[t.url.standardizedFileURL.path] { return [r] }
+            return maps.byKey[AppModel.dupKey(t.meta.title, t.meta.artist)] ?? []
+        }
+        var maps = lookup()
+        let missing = picked.filter { rows($0, maps).isEmpty }.map { $0.url }
+        if !missing.isEmpty {
+            await add(urls: missing)
+            maps = lookup()
+        }
+        var out = Set<String>()
+        for t in picked { out.formUnion(rows(t, maps)) }
+        return out
+    }
+
     func addFromMac(_ ids: Set<String>) {
         let urls = macTracks.filter { ids.contains($0.id) }.map { $0.url }
         Task { await add(urls: urls) }

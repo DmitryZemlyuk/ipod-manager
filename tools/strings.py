@@ -151,6 +151,7 @@ S = {
 "commit.failed": ("Couldn't write to the iPod", "Не удалось записать на iPod", "Не вдалося записати на iPod"),
 
 "tool.autotag": ("Tags from the internet", "Теги из интернета", "Теги з інтернету"),
+"mac.level": ("Level volume…", "Выровнять громкость…", "Вирівняти гучність…"),
 "ctx.autotag": ("Find tags on the internet…", "Найти теги в интернете…", "Знайти теги в інтернеті…"),
 
 "at.title": ("Tags from the internet", "Теги из интернета", "Теги з інтернету"),

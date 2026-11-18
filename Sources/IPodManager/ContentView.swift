@@ -15,11 +15,16 @@ struct ContentView: View {
     @State private var ipodSelection = Set<String>()
     @State private var sheet: SheetKind?
     @State private var tagTargets = Set<String>()
+    /// The list the user picked songs in last: the toolbar tools work on that selection.
+    @State private var macIsActive = false
+    @State private var preparing = false
 
     var body: some View {
         VStack(spacing: 10) {
             HSplitView {
-                MacPane(selection: $macSelection, search: search)
+                MacPane(selection: $macSelection, search: search, onTool: { ids, kind in
+                    openFromMac(ids, kind)
+                })
                     .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.trailing, 5)
                 IPodPane(selection: $ipodSelection, search: search, onShowInfo: { ids in
@@ -38,6 +43,8 @@ struct ContentView: View {
         .padding(.bottom, 10)
         .padding(.top, 4)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: macSelection) { _, new in if !new.isEmpty { macIsActive = true } }
+        .onChange(of: ipodSelection) { _, new in if !new.isEmpty || macSelection.isEmpty { macIsActive = false } }
         .toolbar { toolbarContent }
         .searchable(text: $search, placement: .toolbar, prompt: Text(L("search.prompt")))
         .sheet(item: $sheet) { kind in
@@ -66,6 +73,28 @@ struct ContentView: View {
         .navigationTitle(L("app.title"))
     }
 
+    /// Opens a tool for songs picked in the Mac list: they are queued for the iPod if needed
+    /// and selected in the iPod list, so the tool starts with exactly these songs.
+    private func openFromMac(_ ids: Set<String>, _ kind: SheetKind) {
+        guard !preparing else { return }
+        preparing = true
+        Task {
+            let rows = await model.rowsForMac(ids)
+            preparing = false
+            guard !rows.isEmpty else { return }
+            ipodSelection = rows
+            sheet = kind
+        }
+    }
+
+    private func openTool(_ kind: SheetKind) {
+        if macIsActive, !macSelection.isEmpty {
+            openFromMac(macSelection, kind)
+        } else {
+            sheet = kind
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
@@ -73,7 +102,7 @@ struct ContentView: View {
         }
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                sheet = .soundCheck
+                openTool(.soundCheck)
             } label: {
                 Label(L("tool.soundcheck"), systemImage: "waveform")
             }
@@ -81,12 +110,12 @@ struct ContentView: View {
             .disabled(model.session == nil)
 
             Button {
-                sheet = .autoTag
+                openTool(.autoTag)
             } label: {
                 Label(L("tool.autotag"), systemImage: "globe")
             }
             .help(L("tool.autotag"))
-            .disabled(model.session == nil || (model.tracks.isEmpty && model.pendingAdds.isEmpty))
+            .disabled(model.session == nil || (model.tracks.isEmpty && model.pendingAdds.isEmpty && macSelection.isEmpty))
 
             Button {
                 tagTargets = ipodSelection

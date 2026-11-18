@@ -139,6 +139,7 @@
 "mac.choose" = "Вибрати";
 "mac.empty.text" = "Виберіть теку з музикою або перетягніть файли з Finder просто в список iPod.";
 "mac.empty.title" = "У цій теці немає музики";
+"mac.level" = "Вирівняти гучність…";
 "mac.onipod" = "Вже на iPod";
 "mac.reveal" = "Показати у Finder";
 "mac.scanning" = "Сканую… %ld";
