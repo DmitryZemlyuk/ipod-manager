@@ -92,7 +92,7 @@ S = {
 "tag.mixed": ("Mixed", "Разные значения", "Різні значення"),
 
 "sc.title": ("Volume leveling", "Выравнивание громкости", "Вирівнювання гучності"),
-"sc.subtitle": ("In batches, for songs already on the iPod", "Пакетно, для песен, уже записанных на iPod", "Пакетно, для пісень, які вже на iPod"),
+"sc.subtitle": ("In batches, for songs on the iPod and songs queued for it", "Пакетно, для песен на iPod и песен в очереди на запись", "Пакетно, для пісень на iPod і пісень у черзі на запис"),
 "sc.scope.all": ("Whole iPod · %ld", "Весь iPod · %ld", "Весь iPod · %ld"),
 "sc.scope.selected": ("Selected · %ld", "Выбранные · %ld", "Вибрані · %ld"),
 "sc.scope.missing": ("Not leveled yet · %ld", "Ещё не выровненные · %ld", "Ще не вирівняні · %ld"),
@@ -106,7 +106,7 @@ S = {
 "sc.col.loudness": ("Loudness", "Громкость", "Гучність"),
 "sc.col.clip": ("Clipping", "Клиппинг", "Кліпінг"),
 "sc.col.gain": ("Correction", "Поправка", "Поправка"),
-"sc.empty": ("Press \"Analyze\" – the songs are read straight from the iPod.", "Нажмите «Анализировать» – песни читаются прямо с iPod.", "Натисніть «Аналізувати» – пісні читаються просто з iPod."),
+"sc.empty": ("Press \"Analyze\" – songs are read straight from the iPod, queued ones from the Mac.", "Нажмите «Анализировать» – песни читаются прямо с iPod, а те, что в очереди, – с Mac.", "Натисніть «Аналізувати» – пісні читаються просто з iPod, а ті, що в черзі, – з Mac."),
 "sc.progress": ("Analyzing: %ld of %ld", "Анализ: %ld из %ld", "Аналіз: %ld з %ld"),
 "sc.finished": ("Analyzed: %ld", "Проанализировано: %ld", "Проаналізовано: %ld"),
 "sc.failed": ("Couldn't read: %ld", "Не удалось прочитать: %ld", "Не вдалося прочитати: %ld"),

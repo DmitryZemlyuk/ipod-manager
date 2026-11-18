@@ -121,16 +121,16 @@ struct AutoTagSheet: View {
 
     private var tracksByID: [UInt32: Track] {
         var d: [UInt32: Track] = [:]
-        for t in model.tracks where !model.pendingDeletes.contains(t.uniqueID) { d[t.uniqueID] = model.effective(t) }
+        for t in model.workTracks { d[t.uniqueID] = t }
         return d
     }
 
     private func items(_ scope: Scope) -> [TagItem] {
-        guard let device = model.device else { return [] }
-        let selected = Set(model.trackIDs(for: selectedRowIDs))
-        return model.tracks.compactMap { raw -> TagItem? in
-            guard !model.pendingDeletes.contains(raw.uniqueID) else { return nil }
-            let t = model.effective(raw)
+        guard model.device != nil else { return [] }
+        let selected = Set(model.itemIDs(for: selectedRowIDs))
+        let urls = model.workURLs()
+        return model.workTracks.compactMap { t -> TagItem? in
+            guard let url = urls[t.uniqueID] else { return nil }
             switch scope {
             case .all: break
             case .selected: if !selected.contains(t.uniqueID) { return nil }
@@ -142,7 +142,7 @@ struct AutoTagSheet: View {
             return TagItem(id: t.uniqueID, title: t.title, artist: t.artist, album: t.album,
                            albumArtist: t.albumArtist, genre: t.genre, trackNumber: Int(t.trackNumber),
                            discNumber: Int(t.discNumber), durationMs: Int(t.durationMs),
-                           fileURL: device.fileURL(for: t))
+                           fileURL: url)
         }
     }
 

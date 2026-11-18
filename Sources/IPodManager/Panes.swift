@@ -262,7 +262,7 @@ struct IPodPane: View {
             Button(L("ctx.info")) { onShowInfo(ids) }
                 .disabled(ids.isEmpty)
             Button(L("ctx.autotag")) { onAutoTag(ids) }
-                .disabled(model.trackIDs(for: ids).isEmpty)
+                .disabled(ids.isEmpty)
             Button(L("ctx.sync")) { model.queueTagSync(ids) }
                 .disabled(model.trackIDs(for: ids).isEmpty)
             Divider()

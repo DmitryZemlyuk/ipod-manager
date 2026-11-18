@@ -25,6 +25,32 @@ struct PendingAdd: Identifiable {
     var artwork: ArtworkChange?
     /// Tag edits made before the song was written (they also go into the copy on the iPod).
     var fileEdit = TrackEdit()
+    /// Stand-in track id, so the tag search and the volume tools can address the song before it is written.
+    let tempID: UInt32 = PendingAdd.newTempID()
+    /// Sound Check value measured before the song is written.
+    var soundCheck: UInt32?
+    /// Volume change for the copy on the iPod (the file on the Mac stays as it is).
+    var fileGain: FileGainRequest?
+    /// Whether the file carries its own cover.
+    var hasEmbeddedArt = true
+
+    private static var tempCounter: UInt32 = 0xF000_0000
+    private static func newTempID() -> UInt32 {
+        tempCounter = tempCounter == UInt32.max ? 0xF000_0000 : tempCounter + 1
+        return tempCounter
+    }
+
+    /// Sound Check value the song is going to get (0 = none planned).
+    var plannedSoundCheck: UInt32 { soundCheck ?? fileGain?.fullSoundCheck ?? 0 }
+
+    /// The song as a track, for the tools that work on tracks.
+    var asTrack: Track {
+        let ext = url.pathExtension.isEmpty ? meta.kind.fileExtension : url.pathExtension.lowercased()
+        var t = Track.make(meta: meta, uniqueID: tempID, relativePath: "new." + ext,
+                           fileSize: UInt32(clamping: max(meta.fileSize, 0)))
+        t.soundCheck = plannedSoundCheck
+        return t
+    }
 }
 
 enum RowStatus: Int, Hashable {
@@ -283,9 +309,11 @@ final class AppModel: ObservableObject {
                                 fileURL: device?.fileURL(for: t), imageID: t.mhiiLink, dbid: t.dbid))
         }
         for a in pendingAdds {
+            let planned = a.plannedSoundCheck == 0 ? nil : SoundCheck.gain(forValue: a.plannedSoundCheck)
             rows.append(IPodRow(id: "n\(a.id.uuidString)", trackID: nil, pendingID: a.id,
                                 title: a.meta.title, artist: a.meta.artist, album: a.meta.album,
-                                durationMs: a.meta.durationMs, gainSort: -999, gainLabel: "–",
+                                durationMs: a.meta.durationMs, gainSort: planned ?? -999,
+                                gainLabel: planned == nil ? "–" : formatGain(planned),
                                 status: .added, fileURL: a.url))
         }
         ipodRows = rows
@@ -293,6 +321,33 @@ final class AppModel: ObservableObject {
 
     func trackIDs(for rowIDs: Set<String>) -> [UInt32] {
         rowIDs.compactMap { $0.hasPrefix("t") ? UInt32($0.dropFirst()) : nil }
+    }
+
+    /// Track ids of the rows, including the stand-in ids of songs that are not written yet.
+    func itemIDs(for rowIDs: Set<String>) -> [UInt32] {
+        let pend = pendingIDs(for: rowIDs)
+        return trackIDs(for: rowIDs) + (pend.isEmpty ? [] : pendingAdds.filter { pend.contains($0.id) }.map { $0.tempID })
+    }
+
+    /// Songs the tag search and the volume tools can work on: what is on the iPod plus what is queued for it.
+    var workTracks: [Track] {
+        tracks.filter { !pendingDeletes.contains($0.uniqueID) }.map { effective($0) } + pendingAdds.map { $0.asTrack }
+    }
+
+    /// Where the audio of such a song can be read right now.
+    func workURLs() -> [UInt32: URL] {
+        var out: [UInt32: URL] = [:]
+        if let device {
+            for t in tracks { out[t.uniqueID] = device.fileURL(for: t) }
+        }
+        for a in pendingAdds { out[a.tempID] = a.url }
+        return out
+    }
+
+    private func tempIndex() -> [UInt32: Int] {
+        var out: [UInt32: Int] = [:]
+        for (i, a) in pendingAdds.enumerated() { out[a.tempID] = i }
+        return out
     }
 
     func pendingIDs(for rowIDs: Set<String>) -> Set<UUID> {
@@ -343,17 +398,34 @@ final class AppModel: ObservableObject {
     /// Different edits for different tracks in one go (one UI refresh).
     func applyEdits(_ map: [UInt32: TrackEdit]) {
         guard !map.isEmpty else { return }
+        let temp = tempIndex()
         var edits = pendingEdits
+        var adds = pendingAdds
+        var addsChanged = false
         for (id, e) in map where !e.isEmpty {
-            edits[id] = (edits[id] ?? TrackEdit()).merged(with: e)
+            if let i = temp[id] {
+                e.apply(to: &adds[i].meta)
+                adds[i].fileEdit = adds[i].fileEdit.merged(with: e)
+                addsChanged = true
+            } else {
+                edits[id] = (edits[id] ?? TrackEdit()).merged(with: e)
+            }
         }
         pendingEdits = edits
+        if addsChanged { pendingAdds = adds }
         refreshOnIPodFlags()
     }
 
     // MARK: - Artwork
 
     func hasArtwork(_ t: Track) -> Bool {
+        if let a = pendingAdds.first(where: { $0.tempID == t.uniqueID }) {
+            switch a.artwork {
+            case .set: return true
+            case .remove: return false
+            case nil: return a.hasEmbeddedArt
+            }
+        }
         switch pendingArtwork[t.uniqueID] {
         case .set: return true
         case .remove: return false
@@ -383,12 +455,21 @@ final class AppModel: ObservableObject {
 
     func applyArtwork(_ covers: [UInt32: Data], fromFiles: Bool = false) {
         guard !covers.isEmpty else { return }
+        let temp = tempIndex()
         var map = pendingArtwork
+        var adds = pendingAdds
+        var addsChanged = false
         for (id, d) in covers {
+            if let i = temp[id] {
+                adds[i].artwork = .set(d)
+                addsChanged = true
+                continue
+            }
             map[id] = .set(d)
             if fromFiles { artworkFromFile.insert(id) } else { artworkFromFile.remove(id) }
         }
         pendingArtwork = map
+        if addsChanged { pendingAdds = adds }
     }
 
     // MARK: - Tags inside the files
@@ -495,22 +576,43 @@ final class AppModel: ObservableObject {
 
     func applyFileGain(_ requests: [UInt32: FileGainRequest]) {
         guard !requests.isEmpty else { return }
+        let temp = tempIndex()
         var map = pendingFileGain
         var undo = pendingFileUndo
+        var adds = pendingAdds
+        var addsChanged = false
         for (id, r) in requests {
+            if let i = temp[id] {
+                adds[i].fileGain = r
+                adds[i].soundCheck = nil
+                addsChanged = true
+                continue
+            }
             map[id] = r
             undo.remove(id)
         }
         pendingFileGain = map
         pendingFileUndo = undo
+        if addsChanged { pendingAdds = adds }
     }
 
-    func queueFileUndo(_ ids: [UInt32]) {
-        guard !ids.isEmpty else { return }
+    /// Returns how many songs on the iPod were queued.
+    @discardableResult
+    func queueFileUndo(_ ids: [UInt32]) -> Int {
+        // Songs that are not written yet have nothing to restore: only their planned change is dropped.
+        let temp = tempIndex()
+        if ids.contains(where: { temp[$0] != nil }) {
+            var adds = pendingAdds
+            for id in ids { if let i = temp[id] { adds[i].fileGain = nil } }
+            pendingAdds = adds
+        }
+        let real = ids.filter { temp[$0] == nil }
+        guard !real.isEmpty else { return 0 }
         var map = pendingFileGain
-        for id in ids { map[id] = nil }
+        for id in real { map[id] = nil }
         pendingFileGain = map
-        pendingFileUndo.formUnion(ids)
+        pendingFileUndo.formUnion(real)
+        return real.count
     }
 
     func applySoundCheck(_ values: [UInt32: UInt32]) {
@@ -519,13 +621,23 @@ final class AppModel: ObservableObject {
             for id in values.keys { map[id] = nil }
             pendingFileGain = map
         }
+        let temp = tempIndex()
         var edits = pendingEdits
+        var adds = pendingAdds
+        var addsChanged = false
         for (id, v) in values {
+            if let i = temp[id] {
+                adds[i].soundCheck = v
+                adds[i].fileGain = nil
+                addsChanged = true
+                continue
+            }
             var e = TrackEdit()
             e.soundCheck = v
             edits[id] = (edits[id] ?? TrackEdit()).merged(with: e)
         }
         pendingEdits = edits
+        if addsChanged { pendingAdds = adds }
     }
 
     /// Tag values used to prefill the editor: effective tracks + pending adds.
@@ -601,7 +713,9 @@ final class AppModel: ObservableObject {
             let k = AppModel.dupKey(meta.title, meta.artist)
             if keys.contains(k) { duplicates += 1; continue }
             keys.insert(k)
-            newOnes.append(PendingAdd(url: f, meta: meta))
+            var add = PendingAdd(url: f, meta: meta)
+            add.hasEmbeddedArt = await AudioMetaReader.artworkData(url: f) != nil
+            newOnes.append(add)
         }
         if !newOnes.isEmpty { pendingAdds.append(contentsOf: newOnes) }
         refreshOnIPodFlags()
@@ -735,7 +849,8 @@ final class AppModel: ObservableObject {
                     if let change = a.artwork { w.artwork = change }
                     if !w.isEmpty { tags = w }
                 }
-                adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art, fileTags: tags))
+                adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art, fileTags: tags,
+                                     soundCheck: a.soundCheck, fileGain: a.fileGain))
             }
             changes.adds = adds
             let final = changes

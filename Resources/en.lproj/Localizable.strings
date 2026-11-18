@@ -173,7 +173,7 @@
 "sc.col.gain" = "Correction";
 "sc.col.how" = "How";
 "sc.col.loudness" = "Loudness";
-"sc.empty" = "Press \"Analyze\" – the songs are read straight from the iPod.";
+"sc.empty" = "Press \"Analyze\" – songs are read straight from the iPod, queued ones from the Mac.";
 "sc.fail.decode" = "macOS can't decode this file";
 "sc.fail.missing" = "the file is not on the iPod";
 "sc.failed" = "Couldn't read: %ld";
@@ -193,7 +193,7 @@
 "sc.scope.missing" = "Not leveled yet · %ld";
 "sc.scope.selected" = "Selected · %ld";
 "sc.stop" = "Stop";
-"sc.subtitle" = "In batches, for songs already on the iPod";
+"sc.subtitle" = "In batches, for songs on the iPod and songs queued for it";
 "sc.target" = "Target volume";
 "sc.title" = "Volume leveling";
 "sc.undo" = "Restore original MP3 volume";

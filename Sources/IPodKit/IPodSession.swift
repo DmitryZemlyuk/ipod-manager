@@ -25,12 +25,19 @@ public struct NewTrack: Sendable {
     public var artwork: Data?
     /// Tag changes to write into the copy on the iPod (the source file is never modified).
     public var fileTags: TagWrite?
+    /// Sound Check value measured before the song was copied.
+    public var soundCheck: UInt32?
+    /// Lossless volume change for the copy on the iPod (the source file is never modified).
+    public var fileGain: FileGainRequest?
 
-    public init(sourceURL: URL, meta: AudioMeta, artwork: Data? = nil, fileTags: TagWrite? = nil) {
+    public init(sourceURL: URL, meta: AudioMeta, artwork: Data? = nil, fileTags: TagWrite? = nil,
+                soundCheck: UInt32? = nil, fileGain: FileGainRequest? = nil) {
         self.sourceURL = sourceURL
         self.meta = meta
         self.artwork = artwork
         self.fileTags = fileTags
+        self.soundCheck = soundCheck
+        self.fileGain = fileGain
     }
 }
 
@@ -195,6 +202,7 @@ public final class IPodSession: @unchecked Sendable {
         var created: [URL] = []
         var artwork = changes.artwork
         var tagWrites = changes.fileTags
+        var gainRequests = changes.fileGain
         do {
             // 4. Copy new files.
             var tracks = newDB.tracks
@@ -220,8 +228,11 @@ public final class IPodSession: @unchecked Sendable {
                     counts[fi] += 1
                     let size = (try? fm.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.int64Value ?? add.meta.fileSize
                     let rel = "iPod_Control/Music/\(folder.lastPathComponent)/\(dest.lastPathComponent)"
-                    tracks.append(Track.make(meta: add.meta, uniqueID: nextID, relativePath: rel,
-                                             fileSize: UInt32(clamping: size)))
+                    var track = Track.make(meta: add.meta, uniqueID: nextID, relativePath: rel,
+                                           fileSize: UInt32(clamping: size))
+                    if let sc = add.soundCheck { track.soundCheck = sc }
+                    if let gain = add.fileGain { gainRequests[nextID] = gain }
+                    tracks.append(track)
                     if let art = add.artwork { artwork[nextID] = .set(art) }
                     if let tags = add.fileTags, !tags.isEmpty { tagWrites[nextID] = tags }
                     nextID += 1
@@ -230,14 +241,14 @@ public final class IPodSession: @unchecked Sendable {
             }
 
             // 5. Lossless volume changes inside MP3 files.
-            let gainTotal = changes.fileGain.count + changes.fileGainUndo.count
+            let gainTotal = gainRequests.count + changes.fileGainUndo.count
             if gainTotal > 0 {
                 var done = 0
                 progress(.changingFiles(done: 0, total: gainTotal))
                 for i in tracks.indices {
                     let id = tracks[i].uniqueID
                     let url = device.fileURL(for: tracks[i])
-                    if let req = changes.fileGain[id] {
+                    if let req = gainRequests[id] {
                         do {
                             if req.steps != 0 {
                                 let size = try MP3Gain.applyToFile(url, steps: req.steps)

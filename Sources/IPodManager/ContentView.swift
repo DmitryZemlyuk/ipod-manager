@@ -86,7 +86,7 @@ struct ContentView: View {
                 Label(L("tool.autotag"), systemImage: "globe")
             }
             .help(L("tool.autotag"))
-            .disabled(model.session == nil || model.tracks.isEmpty)
+            .disabled(model.session == nil || (model.tracks.isEmpty && model.pendingAdds.isEmpty))
 
             Button {
                 tagTargets = ipodSelection

@@ -169,13 +169,15 @@ struct SoundCheckSheet: View {
     @AppStorage(Prefs.scChangeFiles) private var changeFiles = false
 
     private var liveTracks: [Track] {
-        model.tracks.filter { !model.pendingDeletes.contains($0.uniqueID) }.map { model.effective($0) }
+        model.workTracks
     }
 
     private func items(for scope: Scope) -> [GainItem] {
-        guard let device = model.device else { return [] }
-        let selected = Set(model.trackIDs(for: selectedRowIDs))
-        return liveTracks.compactMap { t in
+        guard model.device != nil else { return [] }
+        let selected = Set(model.itemIDs(for: selectedRowIDs))
+        let urls = model.workURLs()
+        return liveTracks.compactMap { t -> GainItem? in
+            guard let url = urls[t.uniqueID] else { return nil }
             switch scope {
             case .all: break
             case .selected: if !selected.contains(t.uniqueID) { return nil }
@@ -185,7 +187,7 @@ struct SoundCheckSheet: View {
             let key = t.album.isEmpty ? "" : artist.lowercased() + "\u{1F}" + t.album.lowercased()
             let label = t.fileTypeDescription.contains("Lossless") ? "ALAC"
                 : (t.relativePath as NSString).pathExtension.uppercased()
-            return GainItem(id: t.uniqueID, url: device.fileURL(for: t), title: t.title,
+            return GainItem(id: t.uniqueID, url: url, title: t.title,
                             artist: t.artist, albumKey: key, format: label)
         }
     }
@@ -460,8 +462,8 @@ struct SoundCheckSheet: View {
 
     private func queueUndo() {
         let ids = items(for: scope).filter { $0.format == "MP3" }.map { $0.id }
-        model.queueFileUndo(ids)
-        model.notice = LF("sc.undo.queued", ids.count)
+        let queued = model.queueFileUndo(ids)
+        if queued > 0 { model.notice = LF("sc.undo.queued", queued) }
         job.cancel()
         dismiss()
     }

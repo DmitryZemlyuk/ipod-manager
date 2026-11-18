@@ -264,6 +264,32 @@ final class ArtworkAndGainTests: XCTestCase {
         XCTAssertThrowsError(try MP3Gain.apply(to: Bytes(repeating: 0, count: 5000), steps: 1))
     }
 
+    func testNewSongsArriveAlreadyLeveled() throws {
+        let device = try tempDevice()
+        let src = device.mountURL.appendingPathComponent("song.mp3")
+        let original = frame(gains: [150, 150, 150, 150]) + frame(gains: [150, 150, 150, 150])
+        try Data(original).write(to: src)
+
+        let session = try IPodSession(device: device)
+        var c = CommitChanges()
+        c.adds = [NewTrack(sourceURL: src, meta: meta("A"), soundCheck: 1500),
+                  NewTrack(sourceURL: src, meta: meta("B"),
+                           fileGain: FileGainRequest(steps: -2, fullSoundCheck: 2000, residualSoundCheck: 1100)),
+                  NewTrack(sourceURL: src, meta: meta("C"))]
+        let report = try session.commit(c) { _ in }
+        XCTAssertEqual(report.filesChanged, 1)
+        XCTAssertEqual(report.filesFailed, 0)
+
+        let again = try IPodSession(device: device)
+        XCTAssertEqual(again.tracks.map { $0.soundCheck }, [1500, 1100, 0])
+        // Only the copy on the iPod is changed, the source file stays as it was.
+        XCTAssertEqual(Array(try Data(contentsOf: src)), original)
+        let copyB = Array(try Data(contentsOf: device.fileURL(for: again.tracks[1])))
+        XCTAssertNotEqual(copyB, original)
+        XCTAssertEqual(Array(try Data(contentsOf: device.fileURL(for: again.tracks[0]))), original)
+        XCTAssertEqual(Int(again.tracks[1].size), copyB.count)
+    }
+
     func testCommitChangesMP3FilesAndSoundCheck() throws {
         let device = try tempDevice()
         let src = device.mountURL.appendingPathComponent("song.mp3")
