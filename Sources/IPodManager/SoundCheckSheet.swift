@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import IPodKit
 
 struct GainItem: Sendable {
@@ -105,6 +106,32 @@ final class GainJob: ObservableObject {
     }
 }
 
+/// Tells whether the user is moving around with the keyboard (Tab) or the mouse,
+/// so focus rings can be shown for keyboard navigation only.
+@MainActor
+final class KeyboardFocusTracker: ObservableObject {
+    @Published private(set) var usingKeyboard = false
+    private var monitor: Any?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            let isTab = event.type == .keyDown && event.keyCode == 48
+            let isMouse = event.type != .keyDown
+            MainActor.assumeIsolated {
+                if isTab { self?.usingKeyboard = true }
+                if isMouse { self?.usingKeyboard = false }
+            }
+            return event
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
 struct SoundCheckSheet: View {
     enum Scope: Hashable { case all, selected, missing }
 
@@ -113,6 +140,8 @@ struct SoundCheckSheet: View {
     let selectedRowIDs: Set<String>
 
     @StateObject private var job = GainJob()
+    @StateObject private var keyboard = KeyboardFocusTracker()
+    @FocusState private var focusedCard: Int?
     @State private var scope: Scope = .all
     @AppStorage(Prefs.scTarget) private var target = 89.0
     @AppStorage(Prefs.scAlbumMode) private var albumMode = true
@@ -180,10 +209,10 @@ struct SoundCheckSheet: View {
             }
 
             HStack(alignment: .top, spacing: 12) {
-                modeCard(selected: !changeFiles, title: L("sc.mode.soundcheck"), text: L("sc.mode.soundcheck.text")) {
+                modeCard(0, selected: !changeFiles, title: L("sc.mode.soundcheck"), text: L("sc.mode.soundcheck.text")) {
                     changeFiles = false
                 }
-                modeCard(selected: changeFiles, title: L("sc.mode.files"), text: L("sc.mode.files.text")) {
+                modeCard(1, selected: changeFiles, title: L("sc.mode.files"), text: L("sc.mode.files.text")) {
                     changeFiles = true
                 }
             }
@@ -249,10 +278,15 @@ struct SoundCheckSheet: View {
         .onAppear {
             if !selectedRowIDs.isEmpty, !items(for: .selected).isEmpty { scope = .selected }
         }
-        .onDisappear { job.cancel() }
+        .onAppear { keyboard.start() }
+        .onDisappear {
+            keyboard.stop()
+            job.cancel()
+        }
     }
 
-    private func modeCard(selected: Bool, title: String, text: String, action: @escaping () -> Void) -> some View {
+    private func modeCard(_ index: Int, selected: Bool, title: String, text: String,
+                          action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
@@ -278,8 +312,17 @@ struct SoundCheckSheet: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
-        // The keyboard focus ring made the unselected card look selected too.
+        // The system ring also showed up without the keyboard (the sheet focuses the first card on open)
+        // and made the unselected card look selected. Our own ring appears only after Tab.
         .focusEffectDisabled()
+        .focused($focusedCard, equals: index)
+        .overlay(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 3)
+                .padding(-3)
+                .opacity(keyboard.usingKeyboard && focusedCard == index ? 1 : 0)
+                .allowsHitTesting(false)
+        )
         .disabled(job.running)
     }
 
