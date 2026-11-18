@@ -31,6 +31,7 @@
 "at.filter.choose" = "Pick an edition · %ld";
 "at.filter.found" = "Exact match · %ld";
 "at.filter.notfound" = "Not found · %ld";
+"at.genres" = "Looking up genres and album years…";
 "at.keepfilled" = "Don't touch fields I've already filled";
 "at.more" = "…and %ld more songs";
 "at.nochanges" = "Tags already match";

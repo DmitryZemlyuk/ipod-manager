@@ -31,6 +31,7 @@
 "at.filter.choose" = "Обери видання · %ld";
 "at.filter.found" = "Точний збіг · %ld";
 "at.filter.notfound" = "Не знайдено · %ld";
+"at.genres" = "Уточнюю жанри та роки альбомів…";
 "at.keepfilled" = "Не чіпати поля, які вже заповнені";
 "at.more" = "…і ще пісень: %ld";
 "at.nochanges" = "Теги вже збігаються";

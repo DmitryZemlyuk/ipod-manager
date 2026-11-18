@@ -10,6 +10,7 @@ final class AutoTagJob: ObservableObject {
     @Published var finished = false
     @Published var checked = Set<String>()
     @Published var choice: [String: String] = [:]   // group id → release id
+    @Published var refiningGenres = false
     @Published var errorCount = 0
     @Published var lastError = ""
     private var task: Task<Void, Never>?
@@ -44,6 +45,11 @@ final class AutoTagJob: ObservableObject {
                 }
             }, onGroup: { g in
                 Task { @MainActor in self.add(g, gen) }
+            }, onStage: { stage in
+                Task { @MainActor in
+                    guard self.generation == gen else { return }
+                    self.refiningGenres = stage == .genres
+                }
             })
             guard self.generation == gen else { return }
             for g in result { self.add(g, gen) }
@@ -51,12 +57,18 @@ final class AutoTagJob: ObservableObject {
             self.errorCount = errs.count
             self.lastError = errs.last ?? ""
             self.running = false
+            self.refiningGenres = false
             self.finished = !Task.isCancelled
         }
     }
 
     private func add(_ g: TagGroup, _ gen: Int) {
-        guard gen == generation, !groups.contains(where: { $0.id == g.id }) else { return }
+        guard gen == generation else { return }
+        if let i = groups.firstIndex(where: { $0.id == g.id }) {
+            // The same group again with more details (genres arrive at the end): keep the user's choices.
+            groups[i] = g
+            return
+        }
         groups.append(g)
         if let first = g.options.first {
             choice[g.id] = first.id
@@ -69,6 +81,7 @@ final class AutoTagJob: ObservableObject {
         task = nil
         generation += 1
         running = false
+        refiningGenres = false
     }
 
     func option(for g: TagGroup) -> ReleaseOption? {
@@ -257,7 +270,7 @@ struct AutoTagSheet: View {
         }
         if job.running {
             VStack(alignment: .leading, spacing: 6) {
-                Text(LF("at.progress", job.done, max(job.total, job.done)))
+                Text(job.refiningGenres ? L("at.genres") : LF("at.progress", job.done, max(job.total, job.done)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ProgressView(value: Double(job.done), total: Double(max(job.total, 1)))

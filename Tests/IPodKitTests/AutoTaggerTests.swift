@@ -81,6 +81,27 @@ final class AutoTaggerTests: XCTestCase {
         XCTAssertEqual(p.year, 1998)
     }
 
+    func testGenreFromTags() throws {
+        func tag(_ n: String, _ c: Int) -> MBGenre { try! JSONDecoder().decode(MBGenre.self, from: Data("{\"name\":\"\(n)\",\"count\":\(c)}".utf8)) }
+        XCTAssertEqual(Genres.pick([tag("british", 9), tag("trip-hop", 5), tag("electronic", 3), tag("seen live", 7)]), "Trip Hop")
+        XCTAssertEqual(Genres.pick([tag("dance-pop", 2), tag("pop", 2)]), "Dance-pop")
+        XCTAssertEqual(Genres.pick([tag("idm", 4)]), "IDM")
+        XCTAssertEqual(Genres.pick([tag("r&b", 1)]), "R&B")
+        XCTAssertNil(Genres.pick([tag("british", 9), tag("rock", 0)]))
+        XCTAssertNil(Genres.pick(nil))
+        // search results: tags on release groups and artists
+        let rg = try JSONDecoder().decode(MBReleaseGroupSearch.self, from: Data("""
+        {"release-groups":[{"id":"x","first-release-date":"1998-04-20","primary-type":"Album","tags":[{"count":3,"name":"trip hop"}]}]}
+        """.utf8))
+        XCTAssertEqual(rg.releaseGroups?.first?.firstReleaseYear, 1998)
+        XCTAssertEqual(Genres.pick(rg.releaseGroups?.first?.tags), "Trip Hop")
+        let ar = try JSONDecoder().decode(MBArtistSearch.self, from: Data("""
+        {"artists":[{"id":"a1","name":"Massive Attack","tags":[{"count":5,"name":"trip-hop"},{"count":8,"name":"british"}]}]}
+        """.utf8))
+        XCTAssertEqual(ar.artists?.first?.id, "a1")
+        XCTAssertEqual(Genres.pick(ar.artists?.first?.tags), "Trip Hop")
+    }
+
     func testHelpers() {
         XCTAssertTrue(AutoTagger.isJunkTitle("Track 03"))
         XCTAssertTrue(AutoTagger.isJunkTitle("03"))

@@ -57,6 +57,7 @@ public struct ReleaseOption: Sendable, Identifiable {
     public let country: String
     public let coverage: Double
     public let releaseGroupID: String?
+    public var artistID: String?
     public var proposals: [UInt32: TagProposal]
 }
 
@@ -126,7 +127,8 @@ public final class AutoTagger: @unchecked Sendable {
 
     public func run(items: [TagItem],
                     progress: @Sendable (Int, Int) -> Void,
-                    onGroup: @Sendable (TagGroup) -> Void = { _ in }) async -> [TagGroup] {
+                    onGroup: @Sendable (TagGroup) -> Void = { _ in },
+                    onStage: @Sendable (Stage) -> Void = { _ in }) async -> [TagGroup] {
         var albums: [String: [TagItem]] = [:]
         var albumOrder: [String] = []
         var singles: [TagItem] = []
@@ -138,6 +140,16 @@ public final class AutoTagger: @unchecked Sendable {
             let key = AutoTagger.albumKey(item)
             if albums[key] == nil { albumOrder.append(key) }
             albums[key, default: []].append(item)
+        }
+        // With only a few songs of an album, looking the album up costs a request per album and
+        // tells little more than a song search does. Those songs are searched several per request
+        // instead (their own album is still preferred among the results).
+        var loose: [LooseSong] = []
+        albumOrder.removeAll { key in
+            guard let few = albums[key], few.count < AutoTagger.albumLookupMinimum else { return false }
+            loose.append(contentsOf: few.map { LooseSong(item: $0, albumKey: key) })
+            albums[key] = nil
+            return true
         }
 
         var groups: [TagGroup] = []
@@ -151,7 +163,6 @@ public final class AutoTagger: @unchecked Sendable {
         progress(done, total)
 
         // Albums: one search request covers several albums, then one lookup per album.
-        var loose: [LooseSong] = []
         for chunk in AutoTagger.chunks(albumOrder, of: 5) {
             if Task.isCancelled { break }
             var batch: MBBatch<MBRelease>?
@@ -253,7 +264,78 @@ public final class AutoTagger: @unchecked Sendable {
             emit(TagGroup(id: "u" + key, itemIDs: unknown.map { $0.id }, title: first.album,
                           artist: AutoTagger.mainArtist(first), options: [], source: .tags, confidence: 0))
         }
+
+        // Genres and album years for songs found by a song search: many albums/artists per request.
+        if !Task.isCancelled {
+            onStage(.genres)
+            for g in await enrich(groups) {
+                if let i = groups.firstIndex(where: { $0.id == g.id }) { groups[i] = g }
+                onGroup(g)
+            }
+        }
         return groups
+    }
+
+    /// Songs of an album are looked up as an album only from this many songs on.
+    static let albumLookupMinimum = 4
+
+    public enum Stage: Sendable { case searching, genres }
+
+    /// Fills in missing genres (album first, then artist) and the album's original year.
+    /// Returns the groups that changed.
+    func enrich(_ groups: [TagGroup]) async -> [TagGroup] {
+        var albumIDs: [String] = [], artistIDs: [String] = []
+        var seenAlbums = Set<String>(), seenArtists = Set<String>()
+        func needsGenre(_ o: ReleaseOption) -> Bool { o.proposals.values.contains { $0.genre.isEmpty } }
+        for g in groups {
+            for o in g.options where needsGenre(o) || g.id.hasPrefix("s") {
+                if let id = o.releaseGroupID, seenAlbums.insert(id).inserted { albumIDs.append(id) }
+            }
+        }
+        var albumInfo: [String: (genre: String?, year: Int?)] = [:]
+        for chunk in AutoTagger.chunks(albumIDs, of: 40) {
+            if Task.isCancelled { return [] }
+            for rg in await attempt({ try await self.client.releaseGroups(ids: chunk) }) ?? [] {
+                guard let id = rg.id else { continue }
+                albumInfo[id] = (Genres.pick(rg.tags) ?? AutoTagger.topGenre(rg.genres), rg.firstReleaseYear)
+            }
+        }
+        for g in groups {
+            for o in g.options where needsGenre(o) && (o.releaseGroupID.flatMap { albumInfo[$0]?.genre } ?? nil) == nil {
+                if let id = o.artistID, seenArtists.insert(id).inserted { artistIDs.append(id) }
+            }
+        }
+        var artistGenre: [String: String] = [:]
+        for chunk in AutoTagger.chunks(artistIDs, of: 40) {
+            if Task.isCancelled { return [] }
+            for a in await attempt({ try await self.client.artists(ids: chunk) }) ?? [] {
+                if let id = a.id, let genre = Genres.pick(a.tags) ?? AutoTagger.topGenre(a.genres) { artistGenre[id] = genre }
+            }
+        }
+        var changed: [TagGroup] = []
+        for var g in groups {
+            var touched = false
+            for oi in g.options.indices {
+                let o = g.options[oi]
+                let info = o.releaseGroupID.flatMap { albumInfo[$0] }
+                let genre = info?.genre ?? o.artistID.flatMap { artistGenre[$0] }
+                var fixed = o.proposals
+                for (k, p) in fixed {
+                    if p.genre.isEmpty, let genre {
+                        fixed[k]?.genre = genre
+                        touched = true
+                    }
+                    // A song search names one particular edition; the album's first release gives the real year.
+                    if g.id.hasPrefix("s"), let y = info?.year, y != p.year {
+                        fixed[k]?.year = y
+                        touched = true
+                    }
+                }
+                g.options[oi].proposals = fixed
+            }
+            if touched { changed.append(g) }
+        }
+        return changed
     }
 
     // MARK: Album
@@ -408,7 +490,8 @@ public final class AutoTagger: @unchecked Sendable {
             if p.title.isEmpty { p.title = b.rec.title ?? "" }
             let recArtist = creditString(b.rec.artistCredit)
             if !recArtist.isEmpty { p.artist = recArtist }
-            let opt = AutoTagger.option(b.release, coverage: 1, proposals: [item.id: p])
+            var opt = AutoTagger.option(b.release, coverage: 1, proposals: [item.id: p])
+            if let id = b.rec.artistCredit?.first?.artist?.id { opt.artistID = id }
             return TagGroup(id: "s\(item.id)", itemIDs: [item.id],
                             title: item.title.isEmpty ? item.fileURL.lastPathComponent : item.title,
                             artist: item.artist, options: [opt], source: source,
@@ -602,7 +685,8 @@ public final class AutoTagger: @unchecked Sendable {
         let formats = Array(Set((r.media ?? []).compactMap { $0.format })).sorted().joined(separator: "+")
         return ReleaseOption(id: r.id, title: r.title ?? "", artist: creditString(r.artistCredit), year: r.year,
                              trackCount: r.totalTracks, format: formats, country: r.country ?? "",
-                             coverage: coverage, releaseGroupID: r.releaseGroup?.id, proposals: proposals)
+                             coverage: coverage, releaseGroupID: r.releaseGroup?.id,
+                             artistID: r.artistCredit?.first?.artist?.id, proposals: proposals)
     }
 
     static func releaseRank(_ r: MBRelease) -> Int {

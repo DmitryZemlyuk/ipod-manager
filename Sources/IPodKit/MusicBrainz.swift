@@ -4,7 +4,10 @@ import CryptoKit
 // MARK: - JSON models (MusicBrainz web service v2, fmt=json)
 
 public struct MBArtist: Decodable, Sendable {
+    public let id: String?
     public let genres: [MBGenre]?
+    /// Free-form tags (search results carry these instead of genres).
+    public let tags: [MBGenre]?
 }
 
 public struct MBArtistCredit: Decodable, Sendable {
@@ -23,10 +26,12 @@ public struct MBReleaseGroup: Decodable, Sendable {
     public let primaryType: String?
     public let secondaryTypes: [String]?
     public let genres: [MBGenre]?
+    /// Free-form tags (search results carry these instead of genres).
+    public let tags: [MBGenre]?
     public let firstReleaseDate: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, genres
+        case id, genres, tags
         case primaryType = "primary-type"
         case secondaryTypes = "secondary-types"
         case firstReleaseDate = "first-release-date"
@@ -121,6 +126,18 @@ struct MBReleaseSearch: Decodable {
 struct MBRecordingSearch: Decodable {
     let count: Int?
     let recordings: [MBRecording]?
+}
+
+struct MBReleaseGroupSearch: Decodable {
+    let releaseGroups: [MBReleaseGroup]?
+
+    enum CodingKeys: String, CodingKey {
+        case releaseGroups = "release-groups"
+    }
+}
+
+struct MBArtistSearch: Decodable {
+    let artists: [MBArtist]?
 }
 
 /// Result of a search that asked for several things at once.
@@ -283,6 +300,22 @@ public actor MusicBrainzClient {
         let r = try JSONDecoder().decode(MBRecordingSearch.self, from: data)
         let list = r.recordings ?? []
         return MBBatch(results: list, complete: (r.count ?? Int.max) <= list.count)
+    }
+
+    /// Tags and first release dates of many albums in one request (at most 40 ids).
+    public func releaseGroups(ids: [String]) async throws -> [MBReleaseGroup] {
+        guard !ids.isEmpty else { return [] }
+        let q = "rgid:(" + ids.prefix(40).joined(separator: " OR ") + ")"
+        let data = try await get("release-group", ["query": q, "limit": "100"])
+        return (try JSONDecoder().decode(MBReleaseGroupSearch.self, from: data)).releaseGroups ?? []
+    }
+
+    /// Tags of many artists in one request (at most 40 ids).
+    public func artists(ids: [String]) async throws -> [MBArtist] {
+        guard !ids.isEmpty else { return [] }
+        let q = "arid:(" + ids.prefix(40).joined(separator: " OR ") + ")"
+        let data = try await get("artist", ["query": q, "limit": "100"])
+        return (try JSONDecoder().decode(MBArtistSearch.self, from: data)).artists ?? []
     }
 
     public func release(id: String) async throws -> MBRelease? {

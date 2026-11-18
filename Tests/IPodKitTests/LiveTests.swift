@@ -50,7 +50,15 @@ final class LiveTests: XCTestCase {
         do {
             let c2 = MusicBrainzClient(appVersion: "test")
             let t2 = AutoTagger(client: c2, acoustIDKey: nil, fpcalc: nil)
-            let more = [
+            let lone = [
+                item(20, "Around the World", "Daft Punk", "Homework", ms: 429_000), item(21, "Karma Police", "Radiohead", "OK Computer", ms: 261_000),
+                item(22, "Смысловые галлюцинации", "Смысловые галлюцинации", "", ms: 0), item(23, "Clint Eastwood", "Gorillaz", "Gorillaz", ms: 340_000),
+                item(24, "Sexy Boy", "Air", "Moon Safari", ms: 298_000), item(25, "Glory Box", "Portishead", "Dummy", ms: 305_000),
+                item(26, "Porcelain", "Moby", "Play", ms: 241_000), item(27, "Starlight", "Muse", "Black Holes and Revelations", ms: 240_000),
+                item(28, "Heart Of Stone", "Above & Beyond", "Common Ground", ms: 208_000), item(29, "Red Bottoms", "ADÉLA", "PRIMA", ms: 186_000),
+                item(30, "Dream On", "Aerosmith", "Aerosmith", ms: 267_000), item(31, "Группа крови", "Кино", "Группа крови", ms: 286_000)
+            ]
+            let more = lone + [
                 item(10, "Aerodynamic", "Daft Punk", "Discovery", ms: 212_000), item(11, "Digital Love", "Daft Punk", "Discovery", ms: 301_000),
                 item(12, "Angel", "Massive Attack", "Mezzanine", ms: 379_000),
                 item(13, "Do I Wanna Know?", "Arctic Monkeys", "AM", ms: 272_000),
@@ -71,7 +79,13 @@ final class LiveTests: XCTestCase {
             XCTAssertEqual(box.values.map { $0.0 }, box.values.map { $0.0 }.sorted())
             XCTAssertEqual(groups.reduce(0) { $0 + $1.itemIDs.count }, all.count)
             let requests = await c2.requestCount
-            print("BATCH requests", requests, "seconds", Int(Date().timeIntervalSince(start)), "groups", groups.count, "errors", t2.errors)
+            print("BATCH requests", requests, "for", all.count, "songs, seconds", Int(Date().timeIntervalSince(start)), "groups", groups.count, "errors", t2.errors)
+            let found = groups.filter { !$0.options.isEmpty }
+            let withGenre = found.filter { g in g.options[0].proposals.values.allSatisfy { !$0.genre.isEmpty } }
+            print("BATCH found", found.reduce(0) { $0 + $1.itemIDs.count }, "of", all.count, "songs; groups with a genre:", withGenre.count, "of", found.count)
+            for g in found {
+                print("BATCHGENRE", g.title, "|", g.options[0].proposals.values.map { "\($0.genre) \($0.year) #\($0.trackNumber)/\($0.trackCount) \($0.album)" })
+            }
             for g in groups {
                 print("BATCHGROUP", g.title, "|", g.artist, "→", g.status, g.itemIDs, g.options.first.map { "\($0.title) \($0.year ?? 0) tracks \($0.trackCount)" } ?? "-",
                       g.options.first?.proposals.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value.title)/\($0.value.album)" } ?? [])
@@ -160,31 +174,6 @@ final class LiveTests: XCTestCase {
                 }
                 XCTAssertEqual(try XCTUnwrap(MP3Gain.undo(changed)), original, "\(name) undo")
             }
-        }
-    }
-
-    /// Probe: do search results carry tags for release groups and artists?
-    func testProbeTags() async throws {
-        guard ProcessInfo.processInfo.environment["LIVE_TESTS"] == "1" else { throw XCTSkip("live tests off") }
-        let client = MusicBrainzClient(appVersion: "test")
-        let rec = try await client.get("recording", ["query": "recording:\"Teardrop\" AND artist:\"Massive Attack\"", "limit": "2"])
-        let text = String(decoding: rec, as: UTF8.self)
-        print("PROBE recording:", text.prefix(1500))
-        func first(_ pattern: String) -> String? {
-            guard let r = text.range(of: pattern, options: .regularExpression) else { return nil }
-            let m = String(text[r])
-            return m.range(of: "[0-9a-f]{8}-[0-9a-f-]{27}", options: .regularExpression).map { String(m[$0]) }
-        }
-        let rg = first("\"release-group\":\\{\"id\":\"[0-9a-f-]{36}\"")
-        let artist = first("\"artist\":\\{\"id\":\"[0-9a-f-]{36}\"")
-        print("PROBE ids", rg ?? "-", artist ?? "-")
-        if let rg {
-            let d = try await client.get("release-group", ["query": "rgid:(\(rg) OR 00000000-0000-0000-0000-000000000000)", "limit": "5"])
-            print("PROBE rg:", String(decoding: d, as: UTF8.self).prefix(1800))
-        }
-        if let artist {
-            let d = try await client.get("artist", ["query": "arid:(\(artist))", "limit": "5"])
-            print("PROBE artist:", String(decoding: d, as: UTF8.self).prefix(1800))
         }
     }
 }
