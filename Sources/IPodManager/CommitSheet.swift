@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import IPodKit
 
 struct CommitSheet: View {
@@ -17,7 +18,7 @@ struct CommitSheet: View {
             buttons
         }
         .padding(28)
-        .frame(width: 420)
+        .frame(width: 460)
         .interactiveDismissDisabled(model.commitState.isRunning)
     }
 
@@ -86,14 +87,51 @@ struct CommitSheet: View {
                 .multilineTextAlignment(.center)
             let lines = reportLines
             if !lines.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(lines, id: \.self) { Text($0) }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(lines, id: \.self) { line in
+                        Text(line)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            let failures = model.lastReport.failures
+            if !failures.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(L("report.failures.title")).font(.caption.weight(.semibold))
+                        Spacer()
+                        Button(L("sc.failed.copy")) {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(failures.map { failureLine($0, separator: "\t") }.joined(separator: "\n"), forType: .string)
+                        }
+                        .controlSize(.small)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(failures.enumerated()), id: \.offset) { _, f in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(f.artist.isEmpty ? f.title : f.artist + " – " + f.title)
+                                        .font(.caption.weight(.medium))
+                                    Text(f.file + " · " + operationText(f) + ": " + reasonText(f))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 150)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
         case .failed(let message):
             Text(message)
@@ -102,6 +140,23 @@ struct CommitSheet: View {
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
         }
+    }
+
+    private func operationText(_ f: CommitFailure) -> String {
+        f.operation == .tags ? L("report.op.tags") : L("report.op.volume")
+    }
+
+    private func reasonText(_ f: CommitFailure) -> String {
+        switch f.reason {
+        case .wrongFormat: return L("report.reason.format")
+        case .tooLarge: return L("report.reason.large")
+        case .structure(let detail): return LF("report.reason.structure", detail)
+        case .io(let message): return message
+        }
+    }
+
+    private func failureLine(_ f: CommitFailure, separator: String) -> String {
+        [f.artist.isEmpty ? f.title : f.artist + " – " + f.title, f.file, operationText(f), reasonText(f)].joined(separator: separator)
     }
 
     private var reportLines: [String] {

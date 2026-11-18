@@ -67,6 +67,39 @@ public struct CommitChanges: Sendable {
     public init() {}
 }
 
+/// A file that could not be changed during a write (the iPod database is updated regardless).
+public struct CommitFailure: Sendable, Equatable {
+    public enum Operation: Sendable, Equatable { case tags, volume }
+    public enum Reason: Sendable, Equatable {
+        /// The contents are not what the file extension says (or not audio at all).
+        case wrongFormat
+        case tooLarge
+        /// A structure the app doesn't dare to rewrite; the text says which.
+        case structure(String)
+        /// Reading or writing failed (the system's own message).
+        case io(String)
+    }
+
+    public var operation: Operation
+    public var title: String
+    public var artist: String
+    public var file: String
+    public var reason: Reason
+
+    static func reason(for error: Error) -> Reason {
+        let text: String
+        switch error {
+        case FileTagsError.unsupported(let s): text = s
+        case MP3GainError.notMP3: return .wrongFormat
+        case MP3GainError.unsupported(let s): text = s
+        default: return .io(error.localizedDescription)
+        }
+        if text.contains("too large") { return .tooLarge }
+        if text.hasPrefix("not an") || text.contains("no audio data") { return .wrongFormat }
+        return .structure(text)
+    }
+}
+
 public struct CommitReport: Sendable, Equatable {
     public var artworkWritten = 0
     public var artworkFailed = 0
@@ -79,6 +112,8 @@ public struct CommitReport: Sendable, Equatable {
     public var tagsFailed = 0
     /// Space reclaimed from the cover files.
     public var artworkBytesFreed: Int64 = 0
+    /// Which files could not be changed, and why.
+    public var failures: [CommitFailure] = []
 
     public init() {}
 }
@@ -213,6 +248,8 @@ public final class IPodSession: @unchecked Sendable {
                         } catch {
                             tracks[i].soundCheck = req.fullSoundCheck
                             report.filesFailed += 1
+                            report.failures.append(CommitFailure(operation: .volume, title: tracks[i].title, artist: tracks[i].artist,
+                                                                 file: url.lastPathComponent, reason: CommitFailure.reason(for: error)))
                         }
                         tracks[i].timeModified = MacTime.now()
                         done += 1
@@ -227,6 +264,8 @@ public final class IPodSession: @unchecked Sendable {
                             }
                         } catch {
                             report.filesFailed += 1
+                            report.failures.append(CommitFailure(operation: .volume, title: tracks[i].title, artist: tracks[i].artist,
+                                                                 file: url.lastPathComponent, reason: CommitFailure.reason(for: error)))
                         }
                         done += 1
                         progress(.changingFiles(done: done, total: gainTotal))
@@ -251,6 +290,9 @@ public final class IPodSession: @unchecked Sendable {
                         }
                     } catch {
                         report.tagsFailed += 1
+                        report.failures.append(CommitFailure(operation: .tags, title: tracks[i].title, artist: tracks[i].artist,
+                                                             file: device.fileURL(for: tracks[i]).lastPathComponent,
+                                                             reason: CommitFailure.reason(for: error)))
                     }
                     done += 1
                     progress(.writingTags(done: done, total: tagWrites.count))

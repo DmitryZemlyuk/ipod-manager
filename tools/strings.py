@@ -229,7 +229,7 @@ S = {
 "report.art.unsupported": ("Covers were not saved: this iPod stores them in a format the app can't write.", "Обложки не сохранены: этот iPod хранит их в формате, который апка не умеет записывать.", "Обкладинки не збережено: цей iPod зберігає їх у форматі, який апка не вміє записувати."),
 "report.files.ok": ("MP3 files changed: %ld", "MP3-файлов изменено: %ld", "MP3-файлів змінено: %ld"),
 "report.files.restored": ("MP3 files restored to the original volume: %ld", "MP3-файлов возвращено к исходной громкости: %ld", "MP3-файлів повернено до початкової гучності: %ld"),
-"report.files.failed": ("Files that could not be changed (Sound Check is used for them instead): %ld", "Файлов не удалось изменить (для них используется Sound Check): %ld", "Файлів не вдалося змінити (для них використовується Sound Check): %ld"),
+"report.files.failed": ("MP3 files not changed: %ld (Sound Check is used for them)", "MP3-файлов не изменено: %ld (для них работает Sound Check)", "MP3-файлів не змінено: %ld (для них працює Sound Check)"),
 
 "settings.filetags": ("Also write tags and covers into the files", "Записывать теги и обложки также в сами файлы", "Записувати теги та обкладинки також у самі файли"),
 "settings.filetags.text": ("MP3 and M4A files on the iPod get the same tags and cover as the iPod shows, so they survive an export to the Mac. The audio itself is never changed. Files on the Mac are not touched.", "MP3- и M4A-файлы на iPod получают те же теги и обложку, что показывает плеер, поэтому они сохраняются при экспорте на Mac. Сам звук не меняется. Файлы на Mac не трогаются.", "MP3- та M4A-файли на iPod отримують ті самі теги й обкладинку, що показує плеєр, тому вони зберігаються під час експорту на Mac. Сам звук не змінюється. Файли на Mac не чіпаються."),
@@ -243,7 +243,7 @@ S = {
 "compact.nothing": ("There is nothing to free: every stored cover is in use.", "Освобождать нечего: все сохранённые обложки используются.", "Звільняти нічого: усі збережені обкладинки використовуються."),
 "commit.tags": ("Writing tags into the files", "Записываю теги в файлы", "Записую теги у файли"),
 "report.tags.ok": ("Files with updated tags: %ld", "Файлов с обновлёнными тегами: %ld", "Файлів з оновленими тегами: %ld"),
-"report.tags.failed": ("Files whose tags could not be written (the iPod database is updated anyway): %ld", "Файлов, в которые не удалось записать теги (база iPod всё равно обновлена): %ld", "Файлів, у які не вдалося записати теги (базу iPod усе одно оновлено): %ld"),
+"report.tags.failed": ("Tags not written into files: %ld (the iPod database is updated)", "Теги не записаны в файлы: %ld (база iPod обновлена)", "Теги не записано у файли: %ld (базу iPod оновлено)"),
 "report.art.freed": ("Space freed from old covers: %@", "Освобождено от старых обложек: %@", "Звільнено від старих обкладинок: %@"),
 
 "settings.cache": ("Cache folder", "Папка для кэша", "Тека для кешу"),
@@ -255,6 +255,13 @@ S = {
 "settings.cache.text": ("Files the app keeps on the Mac only to work faster: answers of the tag search (for two weeks) and downloaded cover previews. Inside the folder you choose the app makes its own \"iPod Manager Cache\" folder and only ever deletes that. Nothing of this is written to the iPod.", "Файлы, которые апка держит на Mac только для скорости: ответы поиска тегов (две недели) и загруженные превью обложек. В выбранной папке апка создаёт свою подпапку «iPod Manager Cache» и удаляет только её содержимое. На iPod это не пишется.", "Файли, які апка тримає на Mac лише для швидкості: відповіді пошуку тегів (два тижні) та завантажені превʼю обкладинок. У вибраній теці апка створює свою підтеку «iPod Manager Cache» і видаляє лише її вміст. На iPod це не записується."),
 "settings.cache.onipod": ("Choose a folder on the Mac, not on the iPod.", "Выберите папку на Mac, а не на iPod.", "Виберіть теку на Mac, а не на iPod."),
 "settings.cache.readonly": ("The app can't write to this folder.", "Апка не может писать в эту папку.", "Апка не може писати в цю теку."),
+
+"report.failures.title": ("Files the app could not change", "Файлы, которые не удалось изменить", "Файли, які не вдалося змінити"),
+"report.op.tags": ("tags", "теги", "теги"),
+"report.op.volume": ("volume", "громкость", "гучність"),
+"report.reason.format": ("the contents don't match the file type", "содержимое не соответствует типу файла", "вміст не відповідає типу файла"),
+"report.reason.large": ("the file is larger than 300 MB", "файл больше 300 МБ", "файл більший за 300 МБ"),
+"report.reason.structure": ("unusual file structure (%@)", "необычная структура файла (%@)", "незвична структура файла (%@)"),
 
 "settings.language": ("Language", "Язык интерфейса", "Мова інтерфейсу"),
 "settings.language.system": ("Same as system", "Как в системе", "Як у системі"),

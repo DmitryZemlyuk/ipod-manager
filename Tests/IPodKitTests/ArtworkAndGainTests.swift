@@ -284,6 +284,10 @@ final class ArtworkAndGainTests: XCTestCase {
         let report = try session.commit(g) { _ in }
         XCTAssertEqual(report.filesChanged, 1)
         XCTAssertEqual(report.filesFailed, 1)
+        XCTAssertEqual(report.failures.count, 1)
+        XCTAssertEqual(report.failures.first?.operation, .volume)
+        XCTAssertEqual(report.failures.first?.title, "B")
+        XCTAssertEqual(report.failures.first?.reason, .wrongFormat)
         let after = try IPodSession(device: device)
         XCTAssertEqual(after.tracks[0].soundCheck, 1100)
         XCTAssertEqual(after.tracks[1].soundCheck, 2000)
