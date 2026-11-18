@@ -79,6 +79,12 @@ public struct TagGroup: Sendable, Identifiable {
     }
 }
 
+struct LooseSong {
+    var item: TagItem
+    /// The album group the song came from, when it was not found there.
+    var albumKey: String?
+}
+
 public final class AutoTagger: @unchecked Sendable {
     let client: MusicBrainzClient
     let acoustIDKey: String?
@@ -143,63 +149,141 @@ public final class AutoTagger: @unchecked Sendable {
         var done = 0
         progress(done, total)
 
-        for key in albumOrder {
+        // Albums: one search request covers several albums, then one lookup per album.
+        var loose: [LooseSong] = []
+        for chunk in AutoTagger.chunks(albumOrder, of: 5) {
             if Task.isCancelled { break }
-            let groupItems = albums[key] ?? []
-            let (group, leftovers) = await identifyAlbum(groupItems)
-            if let group { emit(group) }
-            if !leftovers.isEmpty {
-                // Retry the rest one by one; anything still unknown stays together.
+            var batch: MBBatch<MBRelease>?
+            if chunk.count > 1 {
+                let queries = chunk.compactMap { albums[$0]?.first }.map { (album: $0.album, artist: AutoTagger.mainArtist($0)) }
+                batch = await attempt { try await self.client.searchReleasesBatch(queries) }
+            }
+            for key in chunk {
+                if Task.isCancelled { break }
+                let groupItems = albums[key] ?? []
+                var candidates: [MBRelease]?
+                if let batch, let first = groupItems.first {
+                    let artist = AutoTagger.mainArtist(first)
+                    let titled = batch.results.filter { AutoTagger.sameAlbum(first.album, $0.title ?? "") }
+                    let mine = titled.filter { AutoTagger.artistMatches(artist, creditString($0.artistCredit)) }
+                    if !mine.isEmpty {
+                        candidates = mine
+                    } else if !titled.isEmpty {
+                        // The artist may be credited under another spelling. Safe to accept by title alone
+                        // only when no other album of this request has the same name.
+                        let clash = chunk.contains { other in
+                            other != key && AutoTagger.sameAlbum(first.album, albums[other]?.first?.album ?? "")
+                        }
+                        if !clash { candidates = titled }
+                    }
+                }
+                let (group, leftovers) = await identifyAlbum(groupItems, candidates: candidates,
+                                                             skipPlainSearch: batch?.complete ?? false)
+                if let group { emit(group) }
+                loose.append(contentsOf: leftovers.map { LooseSong(item: $0, albumKey: key) })
                 total += leftovers.count
-                var unknown: [TagItem] = []
-                for item in leftovers {
-                    if Task.isCancelled { break }
-                    if let g = await identifySingle(item) { emit(g) } else { unknown.append(item) }
-                    done += 1
-                    progress(done, total)
-                }
-                if !unknown.isEmpty {
-                    emit(TagGroup(id: "u" + key, itemIDs: unknown.map { $0.id }, title: unknown[0].album,
-                                  artist: AutoTagger.mainArtist(unknown[0]), options: [], source: .tags,
-                                  confidence: 0))
-                }
+                done += 1
+                progress(done, total)
+            }
+        }
+        loose.append(contentsOf: singles.map { LooseSong(item: $0, albumKey: nil) })
+
+        // Loose songs: those that need listening to go one by one, the rest several per request.
+        var unknownByAlbum: [String: [TagItem]] = [:]
+        var unknownOrder: [String] = []
+        func finish(_ entry: LooseSong, _ g: TagGroup?) {
+            if let g {
+                emit(g)
+            } else if let key = entry.albumKey {
+                if unknownByAlbum[key] == nil { unknownOrder.append(key) }
+                unknownByAlbum[key, default: []].append(entry.item)
+            } else {
+                emit(TagGroup(id: "u\(entry.item.id)", itemIDs: [entry.item.id],
+                              title: entry.item.title.isEmpty ? entry.item.fileURL.lastPathComponent : entry.item.title,
+                              artist: entry.item.artist, options: [], source: .tags, confidence: 0))
             }
             done += 1
             progress(done, total)
         }
-
-        for item in singles {
+        var searchable: [LooseSong] = []
+        for entry in loose {
             if Task.isCancelled { break }
-            if let g = await identifySingle(item) {
-                emit(g)
+            let byTitle = !entry.item.title.isEmpty && !AutoTagger.isJunkTitle(entry.item.title)
+            if byTitle, !(canFingerprint && AutoTagger.looksUntagged(entry.item)) {
+                searchable.append(entry)
             } else {
-                emit(TagGroup(id: "u\(item.id)", itemIDs: [item.id],
-                              title: item.title.isEmpty ? item.fileURL.lastPathComponent : item.title,
-                              artist: item.artist, options: [], source: .tags, confidence: 0))
+                finish(entry, await identifySingle(entry.item))
             }
-            done += 1
-            progress(done, total)
+        }
+        for chunk in AutoTagger.chunks(searchable, of: 8) {
+            if Task.isCancelled { break }
+            var batch: MBBatch<MBRecording>?
+            if chunk.count > 1 {
+                let queries = chunk.map { e in
+                    (title: e.item.title, artist: AutoTagger.isPlaceholderArtist(e.item.artist) ? "" : e.item.artist,
+                     durationMs: e.item.durationMs)
+                }
+                batch = await attempt { try await self.client.searchRecordingsBatch(queries) }
+            }
+            for entry in chunk {
+                if Task.isCancelled { break }
+                var mine: [MBRecording]?
+                if let batch {
+                    let titled = batch.results.filter { AutoTagger.titleSimilarity(entry.item.title, $0.title ?? "") >= 0.7 }
+                    let found = titled.filter { rec in
+                        AutoTagger.isPlaceholderArtist(entry.item.artist)
+                            || AutoTagger.artistMatches(entry.item.artist, creditString(rec.artistCredit))
+                    }
+                    if !found.isEmpty {
+                        mine = found
+                    } else if !titled.isEmpty {
+                        let clash = chunk.contains { other in
+                            other.item.id != entry.item.id
+                                && AutoTagger.titleSimilarity(entry.item.title, other.item.title) >= 0.7
+                        }
+                        if !clash { mine = titled }
+                    }
+                }
+                finish(entry, await identifySingle(entry.item, candidates: mine, skipPlainSearch: batch?.complete ?? false))
+            }
+        }
+        for key in unknownOrder {
+            guard let unknown = unknownByAlbum[key], let first = unknown.first else { continue }
+            emit(TagGroup(id: "u" + key, itemIDs: unknown.map { $0.id }, title: first.album,
+                          artist: AutoTagger.mainArtist(first), options: [], source: .tags, confidence: 0))
         }
         return groups
     }
 
     // MARK: Album
 
-    func identifyAlbum(_ items: [TagItem]) async -> (TagGroup?, [TagItem]) {
+    /// `candidates` come from a batched search (their scores are not comparable, so they are not used).
+    /// `skipPlainSearch`: the batched search was complete, so repeating it for this album alone is pointless.
+    func identifyAlbum(_ items: [TagItem], candidates given: [MBRelease]? = nil,
+                       skipPlainSearch: Bool = false) async -> (TagGroup?, [TagItem]) {
         guard let first = items.first else { return (nil, []) }
         let artist = AutoTagger.mainArtist(first)
-        var found = await attempt { try await self.client.searchReleases(album: first.album, artist: artist) } ?? []
-        let albumBase = AutoTagger.baseTitle(first.album)
-        if found.filter({ ($0.score ?? 0) >= 60 }).isEmpty, albumBase != first.album, !albumBase.isEmpty {
-            found = await attempt { try await self.client.searchReleases(album: albumBase, artist: artist) } ?? []
+        var found: [MBRelease] = []
+        var useScore = true
+        if let given, !given.isEmpty {
+            found = given
+            useScore = false
+        } else {
+            if !skipPlainSearch {
+                found = await attempt { try await self.client.searchReleases(album: first.album, artist: artist) } ?? []
+            }
+            let albumBase = AutoTagger.baseTitle(first.album)
+            if found.filter({ ($0.score ?? 0) >= 60 }).isEmpty, albumBase != first.album, !albumBase.isEmpty {
+                found = await attempt { try await self.client.searchReleases(album: albumBase, artist: artist) } ?? []
+            }
         }
         // With only a few songs of an album on the iPod the track count says nothing:
         // prefer the official, earliest edition then.
         let useCount = items.count >= 4
         let candidates = found
-            .filter { ($0.score ?? 0) >= 60 }
+            .filter { !useScore || ($0.score ?? 0) >= 60 }
             .sorted { a, b in
-                if (a.score ?? 0) / 10 != (b.score ?? 0) / 10 { return (a.score ?? 0) > (b.score ?? 0) }
+                if useScore, (a.score ?? 0) / 10 != (b.score ?? 0) / 10 { return (a.score ?? 0) > (b.score ?? 0) }
                 let oa = a.status == "Official", ob = b.status == "Official"
                 if oa != ob { return oa }
                 let pa = a.releaseGroup?.primaryType == "Album", pb = b.releaseGroup?.primaryType == "Album"
@@ -247,13 +331,7 @@ public final class AutoTagger: @unchecked Sendable {
         }
         let best = options[0]
 
-        // Genre from the release group when the songs have none.
-        if options[0].proposals.values.allSatisfy({ $0.genre.isEmpty }), let rg = options[0].releaseGroupID {
-            let genres = await attempt { try await self.client.releaseGroupGenres(id: rg) } ?? []
-            if let g = AutoTagger.topGenre(genres) {
-                for k in options[0].proposals.keys { options[0].proposals[k]?.genre = g }
-            }
-        }
+        // Albums without a genre of their own fall back to the artist's genre (it comes with the same answer).
         for oi in options.indices {
             var fixed = options[oi].proposals
             for (k, p) in fixed where p.genre.isEmpty && !p.artistGenre.isEmpty {
@@ -272,7 +350,8 @@ public final class AutoTagger: @unchecked Sendable {
 
     // MARK: Single song
 
-    func identifySingle(_ item: TagItem) async -> TagGroup? {
+    func identifySingle(_ item: TagItem, candidates given: [MBRecording]? = nil,
+                        skipPlainSearch: Bool = false) async -> TagGroup? {
         var recordings: [MBRecording] = []
         var source = TagGroup.Source.tags
         if AutoTagger.looksUntagged(item), canFingerprint, let fpcalc, let key = acoustIDKey {
@@ -287,9 +366,13 @@ public final class AutoTagger: @unchecked Sendable {
         }
         if recordings.isEmpty, !item.title.isEmpty, !AutoTagger.isJunkTitle(item.title) {
             let artist = AutoTagger.isPlaceholderArtist(item.artist) ? "" : item.artist
-            recordings = await attempt { try await self.client.searchRecordings(title: item.title, artist: artist,
-                                                                                durationMs: item.durationMs) } ?? []
-            recordings = recordings.filter { ($0.score ?? 0) >= 80 }
+            if let given, !given.isEmpty {
+                recordings = given
+            } else if !skipPlainSearch {
+                recordings = await attempt { try await self.client.searchRecordings(title: item.title, artist: artist,
+                                                                                    durationMs: item.durationMs) } ?? []
+                recordings = recordings.filter { ($0.score ?? 0) >= 80 }
+            }
             let base = AutoTagger.baseTitle(item.title)
             if recordings.isEmpty, base != item.title, !base.isEmpty, !AutoTagger.isJunkTitle(base) {
                 // "Song - From Some Soundtrack" → "Song"
@@ -400,6 +483,23 @@ public final class AutoTagger: @unchecked Sendable {
             }
         }
         return t.trimmingCharacters(in: .whitespaces)
+    }
+
+    static func chunks<T>(_ list: [T], of size: Int) -> [[T]] {
+        stride(from: 0, to: list.count, by: size).map { Array(list[$0..<min($0 + size, list.count)]) }
+    }
+
+    /// Loose comparison of artist names ("The Beatles" / "Beatles", "A feat. B" / "A").
+    static func artistMatches(_ wanted: String, _ credited: String) -> Bool {
+        let a = normalize(wanted), b = normalize(credited)
+        if a.isEmpty { return true }
+        if b.isEmpty { return false }
+        if a == b || similarity(wanted, credited) >= 0.8 { return true }
+        func strip(_ s: String) -> String { s.hasPrefix("the ") ? String(s.dropFirst(4)) : s }
+        let x = strip(a), y = strip(b)
+        if x == y { return true }
+        // one name inside the other, on word boundaries
+        return (" " + x + " ").contains(" " + y + " ") || (" " + y + " ").contains(" " + x + " ")
     }
 
     /// True when both names are non-empty and name the same album (ignoring "Deluxe Edition" etc.).

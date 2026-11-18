@@ -168,9 +168,9 @@ public struct ArtworkDB: Sendable {
         return ArtworkDB.thumbs(in: sets[si].items[i])
     }
 
-    static func thumbs(in mhii: Bytes) -> [ThumbRef] {
+    static func thumbs(in mhii: Bytes, childCount: Int? = nil) -> [ThumbRef] {
         var out: [ThumbRef] = []
-        let n = Int(mhii.u32(12))
+        let n = childCount ?? Int(mhii.u32(12))
         var o = Int(mhii.u32(4))
         for _ in 0..<n {
             guard mhii.tag(o) == "mhod" else { break }
@@ -205,6 +205,38 @@ public struct ArtworkDB: Sendable {
             o += tl
         }
         return out
+    }
+
+    /// Every thumbnail reference of every image item.
+    public func allThumbRefs() -> [ThumbRef] {
+        guard let si = imageSet else { return [] }
+        return sets[si].items.flatMap { ArtworkDB.thumbs(in: $0) }
+    }
+
+    /// Rewrites thumbnail offsets after the pixel files were compacted: [file name: [old offset: new offset]].
+    public mutating func remapOffsets(_ map: [String: [Int: Int]]) {
+        guard let si = imageSet, !map.isEmpty else { return }
+        for ii in sets[si].items.indices {
+            var mhii = sets[si].items[ii]
+            let n = Int(mhii.u32(12))
+            var o = Int(mhii.u32(4))
+            var changed = false
+            for _ in 0..<n {
+                guard mhii.tag(o) == "mhod" else { break }
+                let tl = Int(mhii.u32(o + 8))
+                guard tl >= 24, o + tl <= mhii.count else { break }
+                if mhii.u16(o + 12) == 2 {
+                    let ni = o + Int(mhii.u32(o + 4))
+                    if mhii.tag(ni) == "mhni", let ref = ArtworkDB.thumbs(in: Array(mhii[0..<Int(mhii.u32(4))]) + Array(mhii[o..<(o + tl)]), childCount: 1).first,
+                       let new = map[ref.fileName]?[ref.offset] {
+                        mhii.setU32(ni + 20, UInt32(new))
+                        changed = true
+                    }
+                }
+                o += tl
+            }
+            if changed { sets[si].items[ii] = mhii }
+        }
     }
 
     // MARK: Mutation
@@ -421,7 +453,8 @@ extension IPodDevice {
         let refs = db.thumbs(imageID: imageID, songID: songID)
             .compactMap { r in ArtworkFormat.known(r.formatID).map { (r, $0) } }
             .sorted { $0.1.byteSize < $1.1.byteSize }
-        guard let (ref, format) = refs.first else { return nil }
+        // A block of another size than the format's full canvas has a layout we don't know: skip it.
+        guard let (ref, format) = refs.first, ref.size == format.byteSize else { return nil }
         var name = ref.fileName
         while name.hasPrefix(":") { name.removeFirst() }
         guard !name.isEmpty, !name.contains(":"), !name.contains("/"),

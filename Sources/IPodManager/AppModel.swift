@@ -23,6 +23,8 @@ struct PendingAdd: Identifiable {
     var meta: AudioMeta
     /// nil = use the cover embedded in the file.
     var artwork: ArtworkChange?
+    /// Tag edits made before the song was written (they also go into the copy on the iPod).
+    var fileEdit = TrackEdit()
 }
 
 enum RowStatus: Int, Hashable {
@@ -74,6 +76,11 @@ final class AppModel: ObservableObject {
     @Published var pendingArtwork: [UInt32: ArtworkChange] = [:] { didSet { rebuildRows() } }
     @Published var pendingFileGain: [UInt32: FileGainRequest] = [:] { didSet { rebuildRows() } }
     @Published var pendingFileUndo: Set<UInt32> = [] { didSet { rebuildRows() } }
+    /// Songs whose database tags should be copied into the files.
+    @Published var pendingTagSync: Set<UInt32> = [] { didSet { rebuildRows() } }
+    /// Queued covers that were read from the song's own file (no need to write them back into it).
+    private var artworkFromFile: Set<UInt32> = []
+    @Published private(set) var compacting = false
     @Published private(set) var ipodRows: [IPodRow] = []
     /// Snapshot of the iPod's cover database, for thumbnails.
     @Published private(set) var artworkDB: ArtworkDB?
@@ -194,14 +201,15 @@ final class AppModel: ObservableObject {
     var hasPending: Bool {
         !pendingAdds.isEmpty || !pendingDeletes.isEmpty || !pendingEdits.isEmpty
             || !pendingArtwork.isEmpty || !pendingFileGain.isEmpty || !pendingFileUndo.isEmpty
+            || !pendingTagSync.isEmpty
     }
 
     /// Songs with any queued change other than add/delete.
     var pendingChangedCount: Int {
         Set(pendingEdits.keys).union(pendingArtwork.keys).union(pendingFileGain.keys).union(pendingFileUndo)
-            .subtracting(pendingDeletes).count
+            .union(pendingTagSync).subtracting(pendingDeletes).count
     }
-    var canCommit: Bool { hasPending && session != nil && !commitState.isRunning }
+    var canCommit: Bool { hasPending && session != nil && !commitState.isRunning && !compacting }
     var pendingAddBytes: Int64 { pendingAdds.reduce(0) { $0 + $1.meta.fileSize } }
     var pendingDeleteBytes: Int64 {
         tracks.filter { pendingDeletes.contains($0.uniqueID) }.reduce(0) { $0 + Int64($1.size) }
@@ -215,6 +223,8 @@ final class AppModel: ObservableObject {
         pendingArtwork = [:]
         pendingFileGain = [:]
         pendingFileUndo = []
+        pendingTagSync = []
+        artworkFromFile = []
     }
 
     func discardPending() {
@@ -264,7 +274,7 @@ final class AppModel: ObservableObject {
             let gain = SoundCheck.gain(forValue: e.soundCheck)
             let id = t.uniqueID
             let changed = pendingEdits[id] != nil || pendingArtwork[id] != nil
-                || pendingFileGain[id] != nil || pendingFileUndo.contains(id)
+                || pendingFileGain[id] != nil || pendingFileUndo.contains(id) || pendingTagSync.contains(id)
             let status: RowStatus = pendingDeletes.contains(id) ? .deleted : (changed ? .edited : .normal)
             rows.append(IPodRow(id: "t\(t.uniqueID)", trackID: t.uniqueID, pendingID: nil,
                                 title: e.title, artist: e.artist, album: e.album,
@@ -305,6 +315,8 @@ final class AppModel: ObservableObject {
             pendingArtwork[id] = nil
             pendingFileGain[id] = nil
             pendingFileUndo.remove(id)
+            pendingTagSync.remove(id)
+            artworkFromFile.remove(id)
         }
         refreshOnIPodFlags()
     }
@@ -321,6 +333,7 @@ final class AppModel: ObservableObject {
             var adds = pendingAdds
             for i in adds.indices where pend.contains(adds[i].id) {
                 edit.apply(to: &adds[i].meta)
+                adds[i].fileEdit = adds[i].fileEdit.merged(with: edit)
             }
             pendingAdds = adds
         }
@@ -355,7 +368,10 @@ final class AppModel: ObservableObject {
             change = .set(n)
         }
         var map = pendingArtwork
-        for id in trackIDs(for: rowIDs) { map[id] = change }
+        for id in trackIDs(for: rowIDs) {
+            map[id] = change
+            artworkFromFile.remove(id)
+        }
         pendingArtwork = map
         let pend = pendingIDs(for: rowIDs)
         if !pend.isEmpty {
@@ -365,11 +381,80 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func applyArtwork(_ covers: [UInt32: Data]) {
+    func applyArtwork(_ covers: [UInt32: Data], fromFiles: Bool = false) {
         guard !covers.isEmpty else { return }
         var map = pendingArtwork
-        for (id, d) in covers { map[id] = .set(d) }
+        for (id, d) in covers {
+            map[id] = .set(d)
+            if fromFiles { artworkFromFile.insert(id) } else { artworkFromFile.remove(id) }
+        }
         pendingArtwork = map
+    }
+
+    // MARK: - Tags inside the files
+
+    /// Whether tag and cover changes are also stored inside the audio files.
+    var writesFileTags: Bool {
+        UserDefaults.standard.object(forKey: Prefs.writeFileTags) as? Bool ?? true
+    }
+
+    /// Queues copying the database tags of these songs (all songs when nil) into their files.
+    func queueTagSync(_ rowIDs: Set<String>?) {
+        let ids: [UInt32]
+        if let rowIDs {
+            ids = trackIDs(for: rowIDs)
+        } else {
+            ids = tracks.map { $0.uniqueID }.filter { !pendingDeletes.contains($0) }
+        }
+        guard !ids.isEmpty else { return }
+        pendingTagSync.formUnion(ids)
+        notice = LF("sync.queued", ids.count)
+    }
+
+    private func fileTagWrites() -> [UInt32: TagWrite] {
+        let editsToFiles = writesFileTags
+        var out: [UInt32: TagWrite] = [:]
+        for t in tracks {
+            let id = t.uniqueID
+            guard !pendingDeletes.contains(id) else { continue }
+            var w = TagWrite()
+            if pendingTagSync.contains(id) { w = TagWrite(allOf: effective(t)) }
+            if editsToFiles {
+                if let e = pendingEdits[id] { w = w.merged(with: TagWrite(edit: e, result: effective(t))) }
+                if let a = pendingArtwork[id], !artworkFromFile.contains(id) { w.artwork = a }
+            }
+            if !w.isEmpty { out[id] = w }
+        }
+        return out
+    }
+
+    /// Frees the space unused covers still take on the iPod.
+    func compactArtwork() {
+        guard let s = session, !compacting, !commitState.isRunning else { return }
+        guard !hasPending else {
+            notice = L("compact.pending")
+            return
+        }
+        compacting = true
+        Task.detached(priority: .userInitiated) {
+            var freed: Int64 = 0
+            var failure: String?
+            do { freed = try s.compactArtwork() } catch { failure = error.localizedDescription }
+            let adb = s.artworkDB
+            let cap = s.device.capacity
+            let done = freed, problem = failure
+            await MainActor.run {
+                self.compacting = false
+                if let problem {
+                    self.notice = problem
+                } else {
+                    self.artworkDB = adb
+                    self.artVersion += 1
+                    self.capacity = cap
+                    self.notice = done > 0 ? LF("compact.done", formatBytes(done)) : L("compact.nothing")
+                }
+            }
+        }
     }
 
     /// Queues the covers embedded in the files for every song that has none on the iPod.
@@ -401,7 +486,7 @@ final class AppModel: ObservableObject {
             }
             self.coverScan = nil
             guard self.device == device else { return }
-            self.applyArtwork(found)
+            self.applyArtwork(found, fromFiles: true)
             self.notice = LF("covers.found", found.count, targets.count)
         }
     }
@@ -625,6 +710,8 @@ final class AppModel: ObservableObject {
         changes.artwork = pendingArtwork.filter { !pendingDeletes.contains($0.key) }
         changes.fileGain = pendingFileGain.filter { !pendingDeletes.contains($0.key) }
         changes.fileGainUndo = pendingFileUndo.subtracting(pendingDeletes)
+        changes.fileTags = fileTagWrites()
+        let tagsIntoFiles = writesFileTags
         commitState = .running(pending.isEmpty ? .writingDatabase : .copying(done: 0, total: pending.count, name: ""))
         let base = changes
         let readCovers = artworkSupported
@@ -640,7 +727,15 @@ final class AppModel: ObservableObject {
                 case nil:
                     art = readCovers ? await AudioMetaReader.artworkData(url: a.url).flatMap { ArtworkPixels.normalized($0) } : nil
                 }
-                adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art))
+                var tags: TagWrite?
+                if tagsIntoFiles {
+                    var w = TagWrite(edit: a.fileEdit,
+                                     track: .init(number: a.meta.trackNumber, total: a.meta.trackCount),
+                                     disc: .init(number: a.meta.discNumber, total: a.meta.discCount))
+                    if let change = a.artwork { w.artwork = change }
+                    if !w.isEmpty { tags = w }
+                }
+                adds.append(NewTrack(sourceURL: a.url, meta: a.meta, artwork: art, fileTags: tags))
             }
             changes.adds = adds
             let final = changes

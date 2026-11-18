@@ -30,6 +30,7 @@ enum Prefs {
     static let scPreventClipping = "scPreventClipping"
     static let acoustIDKey = "acoustIDKey"
     static let scChangeFiles = "scChangeFiles"
+    static let writeFileTags = "writeFileTags"
 }
 
 struct SettingsView: View {
@@ -39,6 +40,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.scAlbumMode) private var albumMode = true
     @AppStorage(Prefs.scPreventClipping) private var preventClipping = true
     @AppStorage(Prefs.acoustIDKey) private var acoustIDKey = ""
+    @AppStorage(Prefs.writeFileTags) private var writeFileTags = true
 
     var body: some View {
         Form {
@@ -63,6 +65,14 @@ struct SettingsView: View {
                             .disabled(model.hasPending || model.commitState.isRunning)
                     }
                 }
+            }
+
+            Section {
+                Toggle(L("settings.filetags"), isOn: $writeFileTags)
+            } footer: {
+                Text(L("settings.filetags.text"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section(L("sc.title")) {

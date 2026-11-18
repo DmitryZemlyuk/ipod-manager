@@ -46,6 +46,26 @@ final class LiveTests: XCTestCase {
             item(4, "Хочешь?", "Земфира", "Прости меня моя любовь", ms: 0),
             item(5, "One More Time", "Daft Punk", "", ms: 320_000)
         ]
+        // everything in one run: searches are batched
+        do {
+            let c2 = MusicBrainzClient(appVersion: "test")
+            let t2 = AutoTagger(client: c2, acoustIDKey: nil, fpcalc: nil)
+            let more = [
+                item(10, "Aerodynamic", "Daft Punk", "Discovery", ms: 212_000), item(11, "Digital Love", "Daft Punk", "Discovery", ms: 301_000),
+                item(12, "Angel", "Massive Attack", "Mezzanine", ms: 379_000),
+                item(13, "Do I Wanna Know?", "Arctic Monkeys", "AM", ms: 272_000),
+                item(14, "Feel Good Inc.", "Gorillaz", "", ms: 221_000), item(15, "Intro", "The xx", "", ms: 127_000),
+                item(16, "Hysteria", "Muse", "", ms: 227_000), item(17, "Definitely Not A Real Song Qzx", "Nobody Qzx", "", ms: 100_000)
+            ]
+            let start = Date()
+            let groups = await t2.run(items: cases + more, progress: { _, _ in })
+            let requests = await c2.requestCount
+            print("BATCH requests", requests, "seconds", Int(Date().timeIntervalSince(start)), "groups", groups.count, "errors", t2.errors)
+            for g in groups {
+                print("BATCHGROUP", g.title, "|", g.artist, "→", g.status, g.itemIDs, g.options.first.map { "\($0.title) \($0.year ?? 0) tracks \($0.trackCount)" } ?? "-",
+                      g.options.first?.proposals.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value.title)/\($0.value.album)" } ?? [])
+            }
+        }
         for c in cases {
             let groups = await tagger.run(items: [c], progress: { _, _ in })
             if !tagger.errors.isEmpty { print("ERRORS", tagger.errors) }

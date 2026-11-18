@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // MARK: - JSON models (MusicBrainz web service v2, fmt=json)
 
@@ -112,8 +113,22 @@ public struct MBRecording: Decodable, Sendable {
     }
 }
 
-struct MBReleaseSearch: Decodable { let releases: [MBRelease]? }
-struct MBRecordingSearch: Decodable { let recordings: [MBRecording]? }
+struct MBReleaseSearch: Decodable {
+    let count: Int?
+    let releases: [MBRelease]?
+}
+
+struct MBRecordingSearch: Decodable {
+    let count: Int?
+    let recordings: [MBRecording]?
+}
+
+/// Result of a search that asked for several things at once.
+public struct MBBatch<T: Sendable>: Sendable {
+    public let results: [T]
+    /// True when the server returned every hit (nothing was cut off by the limit).
+    public let complete: Bool
+}
 
 public func creditString(_ c: [MBArtistCredit]?) -> String {
     guard let c else { return "" }
@@ -140,30 +155,66 @@ public actor MusicBrainzClient {
     private let userAgent: String
     private var lastRequest = Date.distantPast
     private let base = "https://musicbrainz.org/ws/2/"
+    private let cacheDirectory: URL?
+    /// Answers are reused for two weeks, so repeating a search costs no requests.
+    private let cacheLifetime: TimeInterval = 14 * 24 * 3600
+    public private(set) var requestCount = 0
+    public private(set) var cacheHits = 0
 
-    public init(appVersion: String) {
+    public init(appVersion: String, cacheDirectory: URL? = nil) {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 30
         session = URLSession(configuration: cfg)
         userAgent = "iPodManager/\(appVersion) ( https://github.com/DmitryZemlyuk/ipod-manager )"
+        self.cacheDirectory = cacheDirectory
+        if let cacheDirectory {
+            let fm = FileManager.default
+            try? fm.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            // Drop answers that are too old to be used again.
+            let old = Date().addingTimeInterval(-14 * 24 * 3600)
+            for f in (try? fm.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+                if let d = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < old {
+                    try? fm.removeItem(at: f)
+                }
+            }
+        }
+    }
+
+    private func cacheFile(_ key: String) -> URL? {
+        guard let cacheDirectory else { return nil }
+        let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        return cacheDirectory.appendingPathComponent(hash + ".json")
     }
 
     func get(_ path: String, _ query: [String: String]) async throws -> Data {
         var comps = URLComponents(string: base + path)!
-        comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } + [URLQueryItem(name: "fmt", value: "json")]
+        comps.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+            + [URLQueryItem(name: "fmt", value: "json")]
+        let cache = cacheFile(comps.url?.absoluteString ?? path)
+        if let cache,
+           let modified = (try? FileManager.default.attributesOfItem(atPath: cache.path))?[.modificationDate] as? Date,
+           Date().timeIntervalSince(modified) < cacheLifetime,
+           let data = try? Data(contentsOf: cache) {
+            cacheHits += 1
+            return data
+        }
         var req = URLRequest(url: comps.url!)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         for attempt in 0..<4 {
             // Reserve the next free slot before awaiting, so concurrent callers queue up.
-            let slot = max(Date(), lastRequest.addingTimeInterval(1.1))
+            let slot = max(Date(), lastRequest.addingTimeInterval(1.05))
             lastRequest = slot
             let wait = slot.timeIntervalSinceNow
             if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
             try Task.checkCancellation()
             let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse else { throw OnlineError.badResponse }
-            if http.statusCode == 200 { return data }
+            requestCount += 1
+            if http.statusCode == 200 {
+                if let cache { try? data.write(to: cache) }
+                return data
+            }
             if http.statusCode == 503 || http.statusCode == 429 {
                 try await Task.sleep(nanoseconds: UInt64(2_000_000_000 * (attempt + 1)))
                 continue
@@ -179,6 +230,34 @@ public actor MusicBrainzClient {
         if !artist.isEmpty { q += " AND artist:\"\(MusicBrainzClient.escape(artist))\"" }
         let data = try await get("release", ["query": q, "limit": "10"])
         return (try JSONDecoder().decode(MBReleaseSearch.self, from: data)).releases ?? []
+    }
+
+    /// One request for several albums. Results of all of them come back mixed together.
+    public func searchReleasesBatch(_ queries: [(album: String, artist: String)]) async throws -> MBBatch<MBRelease> {
+        let clauses = queries.map { q -> String in
+            var c = "release:\"\(MusicBrainzClient.escape(q.album))\""
+            if !q.artist.isEmpty { c += " AND artist:\"\(MusicBrainzClient.escape(q.artist))\"" }
+            return "(" + c + ")"
+        }
+        let limit = min(100, 20 * queries.count)
+        let data = try await get("release", ["query": clauses.joined(separator: " OR "), "limit": String(limit)])
+        let r = try JSONDecoder().decode(MBReleaseSearch.self, from: data)
+        let list = r.releases ?? []
+        return MBBatch(results: list, complete: (r.count ?? Int.max) <= list.count)
+    }
+
+    /// One request for several songs.
+    public func searchRecordingsBatch(_ queries: [(title: String, artist: String, durationMs: Int)]) async throws -> MBBatch<MBRecording> {
+        let clauses = queries.map { q -> String in
+            var c = "recording:\"\(MusicBrainzClient.escape(q.title))\""
+            if !q.artist.isEmpty { c += " AND artist:\"\(MusicBrainzClient.escape(q.artist))\"" }
+            if q.durationMs > 0 { c += " AND dur:[\(max(q.durationMs - 5000, 0)) TO \(q.durationMs + 5000)]" }
+            return "(" + c + ")"
+        }
+        let data = try await get("recording", ["query": clauses.joined(separator: " OR "), "limit": "100"])
+        let r = try JSONDecoder().decode(MBRecordingSearch.self, from: data)
+        let list = r.recordings ?? []
+        return MBBatch(results: list, complete: (r.count ?? Int.max) <= list.count)
     }
 
     public func release(id: String) async throws -> MBRelease? {

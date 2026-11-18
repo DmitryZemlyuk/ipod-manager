@@ -116,3 +116,49 @@ public enum MacTime {
         return Date(timeIntervalSince1970: utc)
     }
 }
+
+// Big-endian helpers (ID3 and MP4 are big-endian).
+extension Array where Element == UInt8 {
+    func be16(_ o: Int) -> Int {
+        guard o >= 0, o + 2 <= count else { return 0 }
+        return Int(self[o]) << 8 | Int(self[o + 1])
+    }
+
+    func be24(_ o: Int) -> Int {
+        guard o >= 0, o + 3 <= count else { return 0 }
+        return Int(self[o]) << 16 | Int(self[o + 1]) << 8 | Int(self[o + 2])
+    }
+
+    func be32(_ o: Int) -> Int {
+        guard o >= 0, o + 4 <= count else { return 0 }
+        return Int(self[o]) << 24 | Int(self[o + 1]) << 16 | Int(self[o + 2]) << 8 | Int(self[o + 3])
+    }
+
+    func be64(_ o: Int) -> UInt64 {
+        UInt64(be32(o)) << 32 | UInt64(be32(o + 4))
+    }
+
+    mutating func setBE32(_ o: Int, _ v: Int) {
+        self[o] = UInt8(truncatingIfNeeded: v >> 24)
+        self[o + 1] = UInt8(truncatingIfNeeded: v >> 16)
+        self[o + 2] = UInt8(truncatingIfNeeded: v >> 8)
+        self[o + 3] = UInt8(truncatingIfNeeded: v)
+    }
+
+    mutating func setBE64(_ o: Int, _ v: UInt64) {
+        setBE32(o, Int(truncatingIfNeeded: v >> 32))
+        setBE32(o + 4, Int(truncatingIfNeeded: v & 0xFFFF_FFFF))
+    }
+
+    mutating func appendBE16(_ v: Int) {
+        append(UInt8(truncatingIfNeeded: v >> 8))
+        append(UInt8(truncatingIfNeeded: v))
+    }
+
+    mutating func appendBE32(_ v: Int) {
+        append(UInt8(truncatingIfNeeded: v >> 24))
+        append(UInt8(truncatingIfNeeded: v >> 16))
+        append(UInt8(truncatingIfNeeded: v >> 8))
+        append(UInt8(truncatingIfNeeded: v))
+    }
+}
