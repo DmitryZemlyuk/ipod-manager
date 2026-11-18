@@ -188,6 +188,7 @@ S = {
 "at.state.same": ("already matches", "уже совпадает", "вже збігається"),
 "at.state.none": ("nothing found", "ничего не найдено", "нічого не знайдено"),
 "at.state.otheralbum": ("skipped (from another album)", "пропущено (из другого альбома)", "пропущено (з іншого альбому)"),
+"at.state.pending": ("being looked up, will appear shortly", "уточняется, появится чуть позже", "уточнюється, зʼявиться трохи згодом"),
 "at.more": ("…and %ld more songs", "…и ещё песен: %ld", "…і ще пісень: %ld"),
 "at.errors": ("Failed requests: %ld – those songs may show as not found.", "Запросов с ошибкой: %ld – такие песни могут показываться как ненайденные.", "Запитів з помилкою: %ld – такі пісні можуть показуватися як не знайдені."),
 

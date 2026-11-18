@@ -50,6 +50,7 @@
 "at.state.keep" = "залишиться як є (вже заповнено)";
 "at.state.none" = "нічого не знайдено";
 "at.state.otheralbum" = "пропущено (з іншого альбому)";
+"at.state.pending" = "уточнюється, зʼявиться трохи згодом";
 "at.state.replace" = "заміниться";
 "at.state.same" = "вже збігається";
 "at.subtitle" = "MusicBrainz за тегами та назвами, AcoustID за звуком";

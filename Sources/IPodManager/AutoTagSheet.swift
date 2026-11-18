@@ -633,6 +633,7 @@ private struct GroupCard: View {
         case 1: text = wasEmpty ? L("at.state.fill") : L("at.state.replace"); color = .green
         case 2: text = L("at.state.keep"); color = .orange
         case 3: text = L("at.state.none"); color = .secondary
+        case 5: text = L("at.state.pending"); color = .secondary
         case 4: text = L("at.state.otheralbum"); color = .orange
         default: text = L("at.state.same"); color = .secondary
         }
@@ -665,7 +666,8 @@ private struct GroupCard: View {
                                 Text(r.label).foregroundStyle(.secondary)
                                 Text(r.now.isEmpty ? "–" : r.now).lineLimit(1)
                                 Text(r.found.isEmpty ? "–" : r.found).lineLimit(1)
-                                stateView(r.state, wasEmpty: r.now.isEmpty)
+                                // Genres are looked up in batches a little after the song is found.
+                                stateView(r.id == 4 && r.state == 3 && job.running ? 5 : r.state, wasEmpty: r.now.isEmpty)
                             }
                         }
                     }

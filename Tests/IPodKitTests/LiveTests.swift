@@ -78,6 +78,7 @@ final class LiveTests: XCTestCase {
             XCTAssertEqual(box.values.last?.0, all.count)
             XCTAssertEqual(box.values.map { $0.0 }, box.values.map { $0.0 }.sorted())
             XCTAssertEqual(groups.reduce(0) { $0 + $1.itemIDs.count }, all.count)
+            XCTAssertEqual(Set(groups.map { $0.id }).count, groups.count, "a group was returned twice")
             let requests = await c2.requestCount
             print("BATCH requests", requests, "for", all.count, "songs, seconds", Int(Date().timeIntervalSince(start)), "groups", groups.count, "errors", t2.errors)
             let found = groups.filter { !$0.options.isEmpty }

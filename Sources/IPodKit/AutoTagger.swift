@@ -153,9 +153,23 @@ public final class AutoTagger: @unchecked Sendable {
         }
 
         var groups: [TagGroup] = []
+        // Found groups whose genres (and album years) have not been looked up yet.
+        var waiting: [String] = []
         func emit(_ g: TagGroup) {
             groups.append(g)
+            if !g.options.isEmpty { waiting.append(g.id) }
             onGroup(g)
+        }
+        /// Looks up genres for the groups found so far: one request covers 40 albums,
+        /// so this runs every 40 groups and the genres show up while the search goes on.
+        func refine(all: Bool) async {
+            guard !Task.isCancelled, all ? !waiting.isEmpty : waiting.count >= 40 else { return }
+            let ids = Set(waiting)
+            waiting = []
+            for g in await enrich(groups.filter { ids.contains($0.id) }) {
+                if let i = groups.firstIndex(where: { $0.id == g.id }) { groups[i] = g }
+                onGroup(g)
+            }
         }
         // Progress is counted in songs, so it matches the number of songs the user picked.
         let total = items.count
@@ -197,6 +211,7 @@ public final class AutoTagger: @unchecked Sendable {
                 done += groupItems.count - leftovers.count
                 progress(done, total)
             }
+            await refine(all: false)
         }
         loose.append(contentsOf: singles.map { LooseSong(item: $0, albumKey: nil) })
 
@@ -258,6 +273,7 @@ public final class AutoTagger: @unchecked Sendable {
                 }
                 finish(entry, await identifySingle(entry.item, candidates: mine, skipPlainSearch: batch?.complete ?? false))
             }
+            await refine(all: false)
         }
         for key in unknownOrder {
             guard let unknown = unknownByAlbum[key], let first = unknown.first else { continue }
@@ -265,13 +281,10 @@ public final class AutoTagger: @unchecked Sendable {
                           artist: AutoTagger.mainArtist(first), options: [], source: .tags, confidence: 0))
         }
 
-        // Genres and album years for songs found by a song search: many albums/artists per request.
-        if !Task.isCancelled {
+        // Genres and album years for whatever is still waiting.
+        if !Task.isCancelled, !waiting.isEmpty {
             onStage(.genres)
-            for g in await enrich(groups) {
-                if let i = groups.firstIndex(where: { $0.id == g.id }) { groups[i] = g }
-                onGroup(g)
-            }
+            await refine(all: true)
         }
         return groups
     }

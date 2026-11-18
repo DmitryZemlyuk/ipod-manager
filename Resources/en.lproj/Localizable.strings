@@ -50,6 +50,7 @@
 "at.state.keep" = "kept as is (already filled)";
 "at.state.none" = "nothing found";
 "at.state.otheralbum" = "skipped (from another album)";
+"at.state.pending" = "being looked up, will appear shortly";
 "at.state.replace" = "will be replaced";
 "at.state.same" = "already matches";
 "at.subtitle" = "MusicBrainz by tags and titles, AcoustID by sound";
