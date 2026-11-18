@@ -671,7 +671,8 @@ public final class AutoTagger: @unchecked Sendable {
         p.album = release.title ?? ""
         // Year of the album itself, not of this particular reissue.
         p.year = release.releaseGroup?.firstReleaseYear ?? release.year ?? 0
-        p.trackNumber = track.position ?? Int(track.number ?? "") ?? 0
+        // Vinyl editions number their tracks "A1", "B2"…; the position inside the medium is always there.
+        p.trackNumber = track.position ?? Int(track.number ?? "") ?? medium.trackOffset.map { $0 + 1 } ?? 0
         p.trackCount = medium.trackCount ?? medium.tracks?.count ?? 0
         p.discNumber = medium.position ?? 1
         p.discCount = max(release.media?.count ?? 1, 1)

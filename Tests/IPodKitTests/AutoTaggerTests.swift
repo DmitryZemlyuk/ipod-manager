@@ -81,6 +81,19 @@ final class AutoTaggerTests: XCTestCase {
         XCTAssertEqual(p.year, 1998)
     }
 
+    func testTrackNumberOnVinylEditions() throws {
+        let json = """
+        {"id": "v1", "title": "Aerosmith", "status": "Official", "date": "1973-01-05",
+         "media": [{"position": 1, "format": "12\\" Vinyl", "track-count": 8, "track-offset": 2,
+                    "track": [{"number": "A3", "title": "Dream On", "length": 267000}]}]}
+        """
+        let release = try JSONDecoder().decode(MBRelease.self, from: Data(json.utf8))
+        let medium = try XCTUnwrap(release.media?.first)
+        let p = AutoTagger.proposal(release: release, medium: medium, track: try XCTUnwrap(medium.track?.first))
+        XCTAssertEqual(p.trackNumber, 3)
+        XCTAssertEqual(p.trackCount, 8)
+    }
+
     func testGenreFromTags() throws {
         func tag(_ n: String, _ c: Int) -> MBGenre { try! JSONDecoder().decode(MBGenre.self, from: Data("{\"name\":\"\(n)\",\"count\":\(c)}".utf8)) }
         XCTAssertEqual(Genres.pick([tag("british", 9), tag("trip-hop", 5), tag("electronic", 3), tag("seen live", 7)]), "Trip Hop")

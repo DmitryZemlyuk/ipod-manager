@@ -15,7 +15,7 @@ A native macOS app for managing music on an iPod Classic 5th generation (iPod Vi
 - **MP3Gain-style volume change**: optionally the leveling is written into the MP3 files themselves (global gain shifted in 1.5 dB steps, no re-encoding), with mp3gain-compatible undo data in an APEv2 tag and a one-click restore. AAC and other formats keep using Sound Check.
 - **Tags and covers inside the files** (optional, on by default): MP3 (ID3v2.2/2.3/2.4, unknown frames preserved) and M4A/ALAC (iTunes `ilst` atoms, chunk offsets fixed up when the header grows). Audio data is never touched; small edits are done in place using the padding, larger ones through a temporary file. A command copies the iPod database tags into all files.
 - **Cover file compaction**: space taken by replaced or removed covers in the `.ithmb` files is reclaimed automatically once it is worth it, or on demand.
-- Tag search batches several albums or songs into one MusicBrainz request and caches answers for two weeks.
+- Tag search keeps MusicBrainz requests to a minimum: several albums or songs per request, songs of albums with only a few tracks on the iPod are found by song search, genres and album years are fetched in bulk, and answers are cached for two weeks.
 - Cover thumbnails in both lists.
 - Supported formats: MP3, AAC, Apple Lossless, WAV, AIFF. FLAC and other formats the iPod can't play are skipped.
 - Localized in English, Ukrainian and Russian.
