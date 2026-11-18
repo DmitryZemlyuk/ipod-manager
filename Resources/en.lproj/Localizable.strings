@@ -37,7 +37,7 @@
 "at.nofingerprint" = "Recognition by sound is off: add an AcoustID key in Settings.";
 "at.nowrite" = "Nothing is written until you apply and write to the iPod";
 "at.numbers" = "Track numbers";
-"at.progress" = "Searching: %ld of %ld";
+"at.progress" = "Songs checked: %ld of %ld";
 "at.replacecovers" = "Replace existing covers";
 "at.replacegenre" = "But replace genres";
 "at.restart" = "Search again";

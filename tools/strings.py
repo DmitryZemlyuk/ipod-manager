@@ -157,7 +157,7 @@ S = {
 "at.empty": ("Press \"Search\". Songs are matched album by album, so a big library takes a while: MusicBrainz allows one request per second.", "Нажмите «Найти». Песни ищутся по альбомам, поэтому большая медиатека займёт время: MusicBrainz разрешает один запрос в секунду.", "Натисніть «Знайти». Пісні шукаються за альбомами, тому велика медіатека займе час: MusicBrainz дозволяє один запит на секунду."),
 "at.searching": ("Searching…", "Ищу…", "Шукаю…"),
 "at.nofingerprint": ("Recognition by sound is off: add an AcoustID key in Settings.", "Распознавание по звуку выключено: добавьте ключ AcoustID в настройках.", "Розпізнавання за звуком вимкнено: додайте ключ AcoustID у налаштуваннях."),
-"at.progress": ("Searching: %ld of %ld", "Поиск: %ld из %ld", "Пошук: %ld з %ld"),
+"at.progress": ("Songs checked: %ld of %ld", "Проверено песен: %ld из %ld", "Перевірено пісень: %ld з %ld"),
 "at.keepfilled": ("Don't touch fields I've already filled", "Не трогать поля, которые уже заполнены", "Не чіпати поля, які вже заповнені"),
 "at.replacegenre": ("But replace genres", "Но заменять жанры", "Але замінювати жанри"),
 "at.start": ("Search", "Найти", "Знайти"),

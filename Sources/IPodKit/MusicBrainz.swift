@@ -201,28 +201,53 @@ public actor MusicBrainzClient {
         var req = URLRequest(url: comps.url!)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        for attempt in 0..<4 {
+        var attempt = 0
+        while true {
             // Reserve the next free slot before awaiting, so concurrent callers queue up.
-            let slot = max(Date(), lastRequest.addingTimeInterval(1.05))
+            let slot = max(Date(), lastRequest.addingTimeInterval(1.1))
             lastRequest = slot
             let wait = slot.timeIntervalSinceNow
             if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
             try Task.checkCancellation()
-            let (data, resp) = try await session.data(for: req)
+            let data: Data
+            let resp: URLResponse
+            do {
+                (data, resp) = try await session.data(for: req)
+            } catch let e as URLError where MusicBrainzClient.isTransient(e) && attempt < 5 {
+                attempt += 1
+                try await backOff(attempt: attempt, retryAfter: nil)
+                continue
+            }
             guard let http = resp as? HTTPURLResponse else { throw OnlineError.badResponse }
             requestCount += 1
             if http.statusCode == 200 {
                 if let cache { try? data.write(to: cache) }
                 return data
             }
-            if http.statusCode == 503 || http.statusCode == 429 {
-                try await Task.sleep(nanoseconds: UInt64(2_000_000_000 * (attempt + 1)))
+            if [429, 502, 503, 504].contains(http.statusCode), attempt < 5 {
+                // The server is busy or we were too fast: wait (as long as it asks) and try again.
+                attempt += 1
+                let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                try await backOff(attempt: attempt, retryAfter: retryAfter)
                 continue
             }
             if http.statusCode == 404 { return Data("{}".utf8) }
             throw OnlineError.http(http.statusCode)
         }
-        throw OnlineError.http(503)
+    }
+
+    /// Waits before a retry and holds back every other request for the same time.
+    private func backOff(attempt: Int, retryAfter: Double?) async throws {
+        let base = min(2.0 * pow(2.0, Double(attempt - 1)), 30)      // 2, 4, 8, 16, 30 s
+        let delay = min(max(base, retryAfter ?? 0), 60)
+        let until = Date().addingTimeInterval(delay)
+        if until > lastRequest { lastRequest = until }
+        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+    }
+
+    static func isTransient(_ e: URLError) -> Bool {
+        [.timedOut, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+         .notConnectedToInternet].contains(e.code)
     }
 
     public func searchReleases(album: String, artist: String) async throws -> [MBRelease] {

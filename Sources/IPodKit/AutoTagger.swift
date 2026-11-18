@@ -145,7 +145,8 @@ public final class AutoTagger: @unchecked Sendable {
             groups.append(g)
             onGroup(g)
         }
-        var total = albumOrder.count + singles.count
+        // Progress is counted in songs, so it matches the number of songs the user picked.
+        let total = items.count
         var done = 0
         progress(done, total)
 
@@ -181,8 +182,8 @@ public final class AutoTagger: @unchecked Sendable {
                                                              skipPlainSearch: batch?.complete ?? false)
                 if let group { emit(group) }
                 loose.append(contentsOf: leftovers.map { LooseSong(item: $0, albumKey: key) })
-                total += leftovers.count
-                done += 1
+                // Songs still to be searched one by one are counted when they are done.
+                done += groupItems.count - leftovers.count
                 progress(done, total)
             }
         }

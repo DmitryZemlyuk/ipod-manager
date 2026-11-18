@@ -58,7 +58,18 @@ final class LiveTests: XCTestCase {
                 item(16, "Hysteria", "Muse", "", ms: 227_000), item(17, "Definitely Not A Real Song Qzx", "Nobody Qzx", "", ms: 100_000)
             ]
             let start = Date()
-            let groups = await t2.run(items: cases + more, progress: { _, _ in })
+            final class Box: @unchecked Sendable {
+                let lock = NSLock()
+                var values: [(Int, Int)] = []
+            }
+            let box = Box()
+            let all = cases + more
+            let groups = await t2.run(items: all, progress: { d, t in box.lock.lock(); box.values.append((d, t)); box.lock.unlock() })
+            // Progress is in songs: the total never changes, the count only grows and ends at every song.
+            XCTAssertTrue(box.values.allSatisfy { $0.1 == all.count }, "total changed: \(box.values)")
+            XCTAssertEqual(box.values.last?.0, all.count)
+            XCTAssertEqual(box.values.map { $0.0 }, box.values.map { $0.0 }.sorted())
+            XCTAssertEqual(groups.reduce(0) { $0 + $1.itemIDs.count }, all.count)
             let requests = await c2.requestCount
             print("BATCH requests", requests, "seconds", Int(Date().timeIntervalSince(start)), "groups", groups.count, "errors", t2.errors)
             for g in groups {
