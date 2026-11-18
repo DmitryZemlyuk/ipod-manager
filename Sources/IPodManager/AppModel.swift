@@ -209,7 +209,7 @@ final class AppModel: ObservableObject {
         Set(pendingEdits.keys).union(pendingArtwork.keys).union(pendingFileGain.keys).union(pendingFileUndo)
             .union(pendingTagSync).subtracting(pendingDeletes).count
     }
-    var canCommit: Bool { hasPending && session != nil && !commitState.isRunning }
+    var canCommit: Bool { hasPending && session != nil && !commitState.isRunning && !compacting }
     var pendingAddBytes: Int64 { pendingAdds.reduce(0) { $0 + $1.meta.fileSize } }
     var pendingDeleteBytes: Int64 {
         tracks.filter { pendingDeletes.contains($0.uniqueID) }.reduce(0) { $0 + Int64($1.size) }

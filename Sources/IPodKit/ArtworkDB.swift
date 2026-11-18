@@ -453,7 +453,8 @@ extension IPodDevice {
         let refs = db.thumbs(imageID: imageID, songID: songID)
             .compactMap { r in ArtworkFormat.known(r.formatID).map { (r, $0) } }
             .sorted { $0.1.byteSize < $1.1.byteSize }
-        guard let (ref, format) = refs.first else { return nil }
+        // A block of another size than the format's full canvas has a layout we don't know: skip it.
+        guard let (ref, format) = refs.first, ref.size == format.byteSize else { return nil }
         var name = ref.fileName
         while name.hasPrefix(":") { name.removeFirst() }
         guard !name.isEmpty, !name.contains(":"), !name.contains("/"),

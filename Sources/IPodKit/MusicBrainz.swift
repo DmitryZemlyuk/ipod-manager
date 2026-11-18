@@ -168,7 +168,15 @@ public actor MusicBrainzClient {
         userAgent = "iPodManager/\(appVersion) ( https://github.com/DmitryZemlyuk/ipod-manager )"
         self.cacheDirectory = cacheDirectory
         if let cacheDirectory {
-            try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            let fm = FileManager.default
+            try? fm.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            // Drop answers that are too old to be used again.
+            let old = Date().addingTimeInterval(-14 * 24 * 3600)
+            for f in (try? fm.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+                if let d = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < old {
+                    try? fm.removeItem(at: f)
+                }
+            }
         }
     }
 
