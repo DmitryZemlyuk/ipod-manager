@@ -11,6 +11,15 @@ struct GainItem: Sendable {
     let format: String
 }
 
+/// A song whose loudness could not be measured.
+struct GainFailure: Identifiable {
+    let id: UInt32
+    let title: String
+    let artist: String
+    let file: String
+    let reason: String
+}
+
 struct GainRow: Identifiable {
     let id: UInt32
     let title: String
@@ -26,7 +35,8 @@ final class GainJob: ObservableObject {
     @Published var rows: [GainRow] = []
     @Published var done = 0
     @Published var total = 0
-    @Published var failed = 0
+    @Published var failures: [GainFailure] = []
+    var failed: Int { failures.count }
     @Published var running = false
     @Published var finished = false
     private(set) var albumBlocks: [String: [Float]] = [:]
@@ -39,19 +49,19 @@ final class GainJob: ObservableObject {
         albumBlocks = [:]
         albumPeak = [:]
         done = 0
-        failed = 0
+        failures = []
         total = items.count
         running = true
         finished = false
         task = Task {
-            await withTaskGroup(of: (GainItem, LoudnessResult?).self) { group in
+            await withTaskGroup(of: (GainItem, LoudnessResult?, String).self) { group in
                 var it = items.makeIterator()
                 for _ in 0..<2 {
                     guard let item = it.next() else { break }
-                    group.addTask { (item, GainJob.analyze(item)) }
+                    group.addTask { GainJob.analyze(item) }
                 }
                 while let pair = await group.next() {
-                    let (item, result) = pair
+                    let (item, result, problem) = pair
                     if Task.isCancelled { group.cancelAll(); break }
                     self.done += 1
                     if let r = result {
@@ -63,10 +73,11 @@ final class GainJob: ObservableObject {
                             self.albumPeak[item.albumKey] = max(self.albumPeak[item.albumKey] ?? 0, r.peak)
                         }
                     } else {
-                        self.failed += 1
+                        self.failures.append(GainFailure(id: item.id, title: item.title, artist: item.artist,
+                                                         file: item.url.lastPathComponent, reason: problem))
                     }
                     if let next = it.next() {
-                        group.addTask { (next, GainJob.analyze(next)) }
+                        group.addTask { GainJob.analyze(next) }
                     }
                 }
             }
@@ -75,8 +86,15 @@ final class GainJob: ObservableObject {
         }
     }
 
-    nonisolated static func analyze(_ item: GainItem) -> LoudnessResult? {
-        try? Loudness.analyze(url: item.url, isCancelled: { Task.isCancelled })
+    nonisolated static func analyze(_ item: GainItem) -> (GainItem, LoudnessResult?, String) {
+        guard FileManager.default.fileExists(atPath: item.url.path) else {
+            return (item, nil, L("sc.fail.missing"))
+        }
+        do {
+            return (item, try Loudness.analyze(url: item.url, isCancelled: { Task.isCancelled }), "")
+        } catch {
+            return (item, nil, L("sc.fail.decode"))
+        }
     }
 
     func cancel() {
@@ -142,6 +160,7 @@ struct SoundCheckSheet: View {
     @StateObject private var job = GainJob()
     @StateObject private var keyboard = KeyboardFocusTracker()
     @FocusState private var focusedCard: Int?
+    @State private var showFailures = false
     @State private var scope: Scope = .all
     @AppStorage(Prefs.scTarget) private var target = 89.0
     @AppStorage(Prefs.scAlbumMode) private var albumMode = true
@@ -242,7 +261,18 @@ struct SoundCheckSheet: View {
                         Text(job.running ? LF("sc.progress", job.done, job.total) : LF("sc.finished", job.rows.count))
                         Spacer()
                         if job.failed > 0 {
-                            Text(LF("sc.failed", job.failed)).foregroundStyle(.orange)
+                            Button {
+                                showFailures = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(LF("sc.failed", job.failed))
+                                    Image(systemName: "chevron.right.circle")
+                                }
+                                .foregroundStyle(.orange)
+                            }
+                            .buttonStyle(.plain)
+                            .help(L("sc.failed.help"))
+                            .popover(isPresented: $showFailures, arrowEdge: .top) { failureList }
                         }
                     }
                     .font(.caption)
@@ -324,6 +354,44 @@ struct SoundCheckSheet: View {
                 .allowsHitTesting(false)
         )
         .disabled(job.running)
+    }
+
+    /// Which songs could not be measured, and why.
+    private var failureList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L("sc.failed.title")).font(.headline)
+            Text(L("sc.failed.text"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(job.failures) { f in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(f.artist.isEmpty ? f.title : f.artist + " – " + f.title)
+                                .fontWeight(.medium)
+                            Text(f.file + " · " + f.reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+            HStack {
+                Spacer()
+                Button(L("sc.failed.copy")) {
+                    let text = job.failures.map { ($0.artist.isEmpty ? $0.title : $0.artist + " – " + $0.title) + "\t" + $0.file + "\t" + $0.reason }
+                        .joined(separator: "\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 440)
     }
 
     private var resultsTable: some View {

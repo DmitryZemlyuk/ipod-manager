@@ -168,7 +168,13 @@
 "sc.col.how" = "How";
 "sc.col.loudness" = "Loudness";
 "sc.empty" = "Press \"Analyze\" – the songs are read straight from the iPod.";
+"sc.fail.decode" = "macOS can't decode this file";
+"sc.fail.missing" = "the file is not on the iPod";
 "sc.failed" = "Couldn't read: %ld";
+"sc.failed.copy" = "Copy the list";
+"sc.failed.help" = "Show which songs";
+"sc.failed.text" = "Their volume stays as it is. Everything else is leveled as usual.";
+"sc.failed.title" = "Songs that could not be measured";
 "sc.finished" = "Analyzed: %ld";
 "sc.how.file" = "in file %@";
 "sc.mode.files" = "Change the files – like MP3Gain";
