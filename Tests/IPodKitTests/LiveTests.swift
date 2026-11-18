@@ -162,4 +162,29 @@ final class LiveTests: XCTestCase {
             }
         }
     }
+
+    /// Probe: do search results carry tags for release groups and artists?
+    func testProbeTags() async throws {
+        guard ProcessInfo.processInfo.environment["LIVE_TESTS"] == "1" else { throw XCTSkip("live tests off") }
+        let client = MusicBrainzClient(appVersion: "test")
+        let rec = try await client.get("recording", ["query": "recording:\"Teardrop\" AND artist:\"Massive Attack\"", "limit": "2"])
+        let text = String(decoding: rec, as: UTF8.self)
+        print("PROBE recording:", text.prefix(1500))
+        func first(_ pattern: String) -> String? {
+            guard let r = text.range(of: pattern, options: .regularExpression) else { return nil }
+            let m = String(text[r])
+            return m.range(of: "[0-9a-f]{8}-[0-9a-f-]{27}", options: .regularExpression).map { String(m[$0]) }
+        }
+        let rg = first("\"release-group\":\\{\"id\":\"[0-9a-f-]{36}\"")
+        let artist = first("\"artist\":\\{\"id\":\"[0-9a-f-]{36}\"")
+        print("PROBE ids", rg ?? "-", artist ?? "-")
+        if let rg {
+            let d = try await client.get("release-group", ["query": "rgid:(\(rg) OR 00000000-0000-0000-0000-000000000000)", "limit": "5"])
+            print("PROBE rg:", String(decoding: d, as: UTF8.self).prefix(1800))
+        }
+        if let artist {
+            let d = try await client.get("artist", ["query": "arid:(\(artist))", "limit": "5"])
+            print("PROBE artist:", String(decoding: d, as: UTF8.self).prefix(1800))
+        }
+    }
 }
